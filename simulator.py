@@ -78,6 +78,12 @@ def Gillespie_step(params, E, dt_max):
     rates = get_rates(E, params)
     dt_prop = ez_sample_exp(rates)
     dt, reacts = dt_prop.min(axis=1)
+    # total_rate = rates.sum(axis=1)
+    # cum_rates = rates.cumsum(dim=1)
+    # dt = ez_sample_exp(rates.sum(axis=1))
+    # u2 = torch.rand_like(total_rate) * total_rate
+    # reacts = (cum_rates > u2.unsqueeze(1)).float().argmax(dim=1)
+
     change = dt < dt_max
     dt[~change] = dt_max[~change]
     
@@ -100,6 +106,7 @@ def tau_leap(params, E, dt_max):
     """
     rates = get_rates(E, params)
     dt = ((E / 100) / (rates.sum(axis=1)))  
+
     change = dt < dt_max
     dt[~change] = dt_max[~change]
 
@@ -331,12 +338,11 @@ if __name__ == "__main__":
     else:
         prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value))
         params = prior.sample()
-        print(params)
         np.savetxt('synthetic_data/gt_map.csv', 
                    np.vstack((np.loadtxt('synthetic_data/gt_map.csv'),
                               np.hstack((np.array((seed)),params.cpu())))) )
 
-
+    print(params)
     sim = SyntheticSimulator(params=params,
                              name=f'seed{seed}',
                              dil_schedule=20. * torch.pow(10, torch.arange(4)),
