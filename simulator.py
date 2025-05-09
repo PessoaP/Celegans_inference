@@ -336,7 +336,7 @@ if __name__ == "__main__":
 
 
     else:
-        prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value))
+        prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value)/3)
         params = prior.sample()
         np.savetxt('synthetic_data/gt_map.csv', 
                    np.vstack((np.loadtxt('synthetic_data/gt_map.csv'),
@@ -351,3 +351,24 @@ if __name__ == "__main__":
     sim.sample_save(size=100, Ts=torch.arange(4)*48 + 24)
 
 
+
+def integrate_mass_action(params, Ts, dt=0.01):
+    """
+    Simulate ODE trajectories from E=0 using Euler method.
+    """
+    E = 0
+    t = 0
+    
+    Es = []
+    for T in Ts:
+        while t + dt <T:
+            E += get_rates(E,params)*dt
+            t += dt
+        
+        
+        E += get_rates(E,params)*(T-t)
+        t = T
+        
+        Es.append(E)
+
+    return Es
