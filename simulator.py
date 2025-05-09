@@ -49,7 +49,6 @@ def get_rates(E, params):
     return rates
 
 
-
 def ez_sample_exp(rates):
     # Sample exponential waiting times for given reaction rates.
     U = torch.rand_like(rates)
@@ -78,12 +77,6 @@ def Gillespie_step(params, E, dt_max):
     rates = get_rates(E, params)
     dt_prop = ez_sample_exp(rates)
     dt, reacts = dt_prop.min(axis=1)
-    
-    # total_rate = rates.sum(axis=1)
-    # cum_rates = rates.cumsum(dim=1)
-    # dt = ez_sample_exp(rates.sum(axis=1))
-    # u2 = torch.rand_like(total_rate) * total_rate
-    # reacts = (cum_rates > u2.unsqueeze(1)).float().argmax(dim=1)
 
     change = dt < dt_max
     dt[~change] = dt_max[~change]
@@ -106,6 +99,7 @@ def tau_leap(params, E, dt_max):
     dE : torch.Tensor, shape (N,)
     """
     rates = get_rates(E, params) 
+
     # Compute the expected net change in total entity count per unit time
     exp_change = (rates*S).sum(axis=1)
     # Choose dt such that the expected *net* change in E during dt is approximately E / 100
@@ -341,7 +335,7 @@ if __name__ == "__main__":
 
 
     else:
-        prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value))
+        prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value)/3)
         params = prior.sample()
         np.savetxt('synthetic_data/gt_map.csv', 
                    np.vstack((np.loadtxt('synthetic_data/gt_map.csv'),
