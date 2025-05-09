@@ -101,9 +101,10 @@ def tau_leap(params, E, dt_max):
     rates = get_rates(E, params) 
 
     # Compute the expected net change in total entity count per unit time
-    exp_change = (rates*S).sum(axis=1)
+    exp_change = torch.abs((rates*S).sum(axis=1))
     # Choose dt such that the expected *net* change in E during dt is approximately E / 100
     dt = (E / 101) / exp_change
+    dt.clamp(max=.1)
 
     change = dt < dt_max
     dt[~change] = dt_max[~change]
@@ -335,7 +336,7 @@ if __name__ == "__main__":
 
 
     else:
-        prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value)/3)
+        prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value))
         params = prior.sample()
         np.savetxt('synthetic_data/gt_map.csv', 
                    np.vstack((np.loadtxt('synthetic_data/gt_map.csv'),
