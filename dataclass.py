@@ -3,7 +3,7 @@ import repop
 import simulator
 from numpy import log
 
-def simulate_for_likelihood(params, times, Nsamples=2**10):
+def simulate_for_likelihood(params, times, Nsamples=2**15):
     """Simulate population trajectories up to each time in `times`."""
     simulations = []
     t = 0
@@ -41,7 +41,6 @@ class dataset():
             torch.tensor(ts), return_inverse=True
         )
         self.T_index = self.T_index.to(device)
-
         print('Dataset loaded successfully.')
 
     def lpkdil_ns(self, ns, reduce=False, concat=False):
@@ -102,3 +101,4 @@ class dataset():
         ns = simulate_for_likelihood(value, self.times, Nsamples)
         log_probs = self.lpkdil_ns(ns, reduce=True, concat=True)
         return torch.logsumexp(log_probs, dim=0)
+

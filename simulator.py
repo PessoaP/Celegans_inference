@@ -78,6 +78,7 @@ def Gillespie_step(params, E, dt_max):
     rates = get_rates(E, params)
     dt_prop = ez_sample_exp(rates)
     dt, reacts = dt_prop.min(axis=1)
+    
     # total_rate = rates.sum(axis=1)
     # cum_rates = rates.cumsum(dim=1)
     # dt = ez_sample_exp(rates.sum(axis=1))
@@ -104,8 +105,11 @@ def tau_leap(params, E, dt_max):
     dt : torch.Tensor, shape (N,)
     dE : torch.Tensor, shape (N,)
     """
-    rates = get_rates(E, params)
-    dt = ((E / 100) / (rates.sum(axis=1)))  
+    rates = get_rates(E, params) 
+    # Compute the expected net change in total entity count per unit time
+    exp_change = (rates*S).sum(axis=1)
+    # Choose dt such that the expected *net* change in E during dt is approximately E / 100
+    dt = (E / 101) / exp_change
 
     change = dt < dt_max
     dt[~change] = dt_max[~change]
@@ -211,6 +215,7 @@ def sample(params, E_initial=None, T=48, N=None,
 
     while torch.any(t < T):
         t, E = step(params, E, t, T)
+        
 
     return t, E
 
