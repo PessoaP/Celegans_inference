@@ -351,24 +351,24 @@ if __name__ == "__main__":
     sim.sample_save(size=100, Ts=torch.arange(4)*48 + 24)
 
 
-
-def integrate_mass_action(params, Ts, dt=0.01):
+def integrate_mass_action(params, Ts, dt=0.1,device='cpu'):
     """
     Simulate ODE trajectories from E=0 using Euler method.
     """
-    E = 0
+    S_ma = S.to(device)
+    E = torch.zeros(1,device=device)
     t = 0
+
+    dEdt = lambda Ex: (get_rates(Ex,params.reshape(-1,1))*S_ma).sum(axis=1)
     
     Es = []
     for T in Ts:
         while t + dt <T:
-            E += get_rates(E,params)*dt
+            E = E + dEdt(E)*dt
             t += dt
-        
-        
-        E += get_rates(E,params)*(T-t)
-        t = T
-        
-        Es.append(E)
 
-    return Es
+        E = E + dEdt(E)*(T-t)
+        t = T
+
+        Es.append(E*1)
+    return torch.stack(Es)

@@ -2,6 +2,7 @@ import torch
 import repop
 import simulator
 from numpy import log
+from tqdm import tqdm
 
 def simulate_for_likelihood(params, times, Nsamples=2**15):
     """Simulate population trajectories up to each time in `times`."""
@@ -21,6 +22,7 @@ class dataset():
         # Convert counts and dilutions to tensors and send to device
         self.counts = torch.tensor(counts.reshape(-1, 1))
         self.dils = torch.tensor(dils.reshape(-1, 1))
+        self.Ts = torch.tensor(ts.reshape(-1, 1))
 
         # Define upper bound for total number of cells
         self.Nmax = 2 * (counts * dils).max() + 1
@@ -37,9 +39,7 @@ class dataset():
         
 
         # Unique measurement times and row-to-timepoint mapping
-        self.times, self.T_index = torch.unique(
-            torch.tensor(ts), return_inverse=True
-        )
+        self.times, self.T_index = torch.unique(torch.tensor(ts), return_inverse=True)
         self.T_index = self.T_index.to(device)
         print('Dataset loaded successfully.')
 
@@ -102,3 +102,49 @@ class dataset():
         log_probs = self.lpkdil_ns(ns, reduce=True, concat=True)
         return torch.logsumexp(log_probs, dim=0)
 
+    def ode_initialization(self, init=None):
+        """
+        Initialize parameters for ODE fitting via gradient descent.
+        """
+        # If no initialization is provided, start from a zero vector (log(1) = 0)
+        if init is None:
+            init = torch.ones(4)
+
+        # Take logarithm to optimize in log-space for positivity constraints
+        lparams = torch.log(init.data).to('cpu')
+        lparams.requires_grad_()
+
+        target = self.counts * self.dils
+
+        # Optimizer and loss function
+        optimizer = torch.optim.Adam([lparams], lr=.1)
+        l2 = lambda x: torch.sqrt((x * x).sum())  # L2 norm
+        loss_hist = []
+
+        print('Initializing using mass-action similarity')
+
+        for it in tqdm(range(200)):
+            optimizer.zero_grad()
+
+            # Simulate ODE with current parameters
+            n_ode = simulator.integrate_mass_action(torch.exp(lparams), self.Ts, dt=0.1)
+
+            # Compute loss (normalized L2 relative error)
+            loss = l2(target/n_ode-1) / self.ndatapoints
+            #print(loss.item())
+
+            # Check for valid loss before applying backward
+            if ~(torch.isnan(loss) | torch.isinf(loss)):
+                loss.backward()
+                optimizer.step()
+
+                loss_hist.append(loss.item())
+
+                if (it + 1) % 10 == 0:
+                    gradient_norm = l2(lparams.grad).item()
+                    print('gradient:', gradient_norm, loss_hist[-1]  )
+
+                    if gradient_norm<1e-5:
+                        break
+        # Return parameters in original (non-log) space
+        return torch.exp(lparams).detach().to(self.device)
