@@ -4,7 +4,7 @@ import torch
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 value = torch.tensor( (1/20, 1/4, 2*1e5, 1e-3) ).to(device)
 prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value))
-logposterior = lambda value,data: data.loglike(value) + prior.log_prob(value).sum()
+logposterior = lambda value,data: data.loglike(value) ## + prior.log_prob(value).sum()
 
 # ---- Proposal Function ----
 def proposal(th, L):

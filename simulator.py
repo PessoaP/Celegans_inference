@@ -336,7 +336,7 @@ if __name__ == "__main__":
 
 
     else:
-        prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value)/3)
+        prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value))
         params = prior.sample()
         np.savetxt('synthetic_data/gt_map.csv', 
                    np.vstack((np.loadtxt('synthetic_data/gt_map.csv'),
