@@ -154,7 +154,7 @@ def step(params, E, t0, T, E_tol=1e3):
 def sample(params, E_initial=None, T=48, N=None, 
            device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
     """
-    Run full trajectory simulations for N systems.
+    Run full trajectory simulations for N replicates.
 
     Parameters
     ----------
