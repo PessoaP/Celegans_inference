@@ -2,7 +2,11 @@ import torch
 
 #Define log posterior and check up in the lp_gt
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-value = torch.tensor( (1/20, 1/4, 2*1e5, 1e-3) ).to(device)
+value = torch.tensor((1/20, #alpha
+                      1/4, #mu
+                      2*1e5, #k
+                      .1 #d
+                      )).to(device) 
 prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value))
 logposterior = lambda value,data: data.loglike(value)  + prior.log_prob(value).sum()
 

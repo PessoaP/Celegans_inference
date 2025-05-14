@@ -6,10 +6,11 @@ from tqdm import tqdm
 
 def simulate_for_likelihood(params, times, Nsamples=2**15):
     """Simulate population trajectories up to each time in `times`."""
-    simulations = []
-    t = 0
-    for T in times:
-        delta_t, E = simulator.sample(params, N=Nsamples, T=T - t)
+    
+    t,E = simulator.sample(params, N=Nsamples, T=times[0])
+    simulations = [E.int()]
+    for T in times[1:]:
+        delta_t, E = simulator.sample(params, E_initial=1*E, N=Nsamples, T=T-t)
         t += delta_t
         simulations.append(E.int())
     return simulations
@@ -100,7 +101,8 @@ class dataset():
         """
         ns = simulate_for_likelihood(value, self.times, Nsamples)
         log_probs = self.lpkdil_ns(ns, reduce=True, concat=True)
-        return torch.logsumexp(log_probs, dim=0)
+        del ns
+        return torch.sum(log_probs, dim=0)
 
     def ode_initialization(self, init=None):
         """
@@ -108,30 +110,33 @@ class dataset():
         """
         # If no initialization is provided, start from a zero vector (log(1) = 0)
         if init is None:
-            init = torch.ones(4)
+            init = torch.tensor((1/24,1e-2,
+                                 target[self.Ts==self.Ts.max()].median(),
+                                 1e-4))
 
-        # Take logarithm to optimize in log-space for positivity constraints
         lparams = torch.log(init.data).to('cpu')
-        lparams.requires_grad_()
 
         target = self.counts * self.dils
 
         # Optimizer and loss function
+        lparams.requires_grad_()
         optimizer = torch.optim.Adam([lparams], lr=.1)
         l2 = lambda x: torch.sqrt((x * x).sum())  # L2 norm
         loss_hist = []
 
         print('Initializing using mass-action similarity')
 
-        for it in tqdm(range(200)):
+        for it in tqdm(range(500)):
             optimizer.zero_grad()
 
             # Simulate ODE with current parameters
             n_ode = simulator.integrate_mass_action(torch.exp(lparams), self.Ts, dt=0.1)
 
+            scaledtime = self.Ts/self.Ts.min()
             # Compute loss (normalized L2 relative error)
-            loss = l2(target/n_ode-1) / self.ndatapoints
-            #print(loss.item())
+            loss = l2((target/n_ode-1)/(scaledtime**2)) *self.Ts.min()/ self.ndatapoints
+            #print(target/n_ode)
+            
 
             # Check for valid loss before applying backward
             if ~(torch.isnan(loss) | torch.isinf(loss)):

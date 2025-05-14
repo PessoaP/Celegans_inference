@@ -309,7 +309,7 @@ if __name__ == "__main__":
     value = torch.tensor((1/20, #alpha
                           1/4, #mu
                           2*1e5, #k
-                          1e-3 #d
+                          .1 #d
                         )).to(device) 
     if seed == 0:
         
@@ -348,7 +348,7 @@ if __name__ == "__main__":
                              dil_schedule=20. * torch.pow(10, torch.arange(4)),
                              device=device)
 
-    sim.sample_save(size=100, Ts=torch.arange(4)*48 + 24)
+    sim.sample_save(size=100, Ts=torch.arange(5)*48 + 24)
 
 
 def integrate_mass_action(params, Ts, dt=0.1,device='cpu'):
