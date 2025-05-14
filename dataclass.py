@@ -101,7 +101,7 @@ class dataset():
         """
         ns = simulate_for_likelihood(value, self.times, Nsamples)
         log_probs = self.lpkdil_ns(ns, reduce=True, concat=True)
-        del ns
+        #del ns
         return torch.sum(log_probs, dim=0)
 
     def ode_initialization(self, init=None):
@@ -120,7 +120,7 @@ class dataset():
 
         # Optimizer and loss function
         lparams.requires_grad_()
-        optimizer = torch.optim.Adam([lparams], lr=.1)
+        optimizer = torch.optim.Adam([lparams], lr=.01)
         l2 = lambda x: torch.sqrt((x * x).sum())  # L2 norm
         loss_hist = []
 
