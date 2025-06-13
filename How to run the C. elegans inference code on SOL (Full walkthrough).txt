@@ -1,0 +1,42 @@
+How to run the C. elegans inference code on SOL (Full walkthrough)
+
+1) Connect to VPN & Launch SOL from sol.asu.edu
+
+2) Be inside your home directory (or directory you want to store the folder in)
+
+3) Launch SOL terminal
+
+4) Clone private GitHub onto SOL
+	1) Generate an SSH key on SOL
+	ssh-keygen -t rsa -b 4096 -C your_email@example.com
+
+	2) Add public key to GitHub
+	cat ~.sshid_rsa.pub
+	copy the key
+	Go to GitHub  Settings  SSH and GPG Keys  New SSH key.
+	Paste it in, and give it a name like “SOL cluster key”
+
+	3) Clone the repo into SOL
+	git clone git@github.comyour-usernameyour-private-repo.git (if your own)
+	git clone git@github.comowner-usernamerepository-name.git (if shared)
+
+5) Set up the necessary environment (torchcuda)
+	1) Upload the env_gpu.yml folder to your home directory
+
+	2) Create the environment
+	module load mamba
+	mamba env create -f env_gpu.yml
+
+	3) Test that the environment is working 
+		(will need to request interactive GPU session)
+	interactive -G a1001	
+	source activate torchcuda
+	python -c import torch; print('Torch', torch.__version__, ' CUDA', torch.version.cuda, ' Available', torch.cuda.is_available(), ' Device', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')
+
+6) Create the bash script
+	1) Upload the synthjob.sh script to the Celegans_inference folder
+	2) In the terminal, type
+	sbatch synthjob.sh
+
+
+	
