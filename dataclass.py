@@ -126,12 +126,13 @@ class dataset():
         loss_hist = []
 
         print('Initializing using mass-action similarity')
+        Ts_cpu = self.Ts.clone().cpu().float()
 
         for it in tqdm(range(500)):
             optimizer.zero_grad()
 
             # Simulate ODE with current parameters
-            n_ode = simulator.integrate_mass_action(torch.exp(lparams), self.Ts, dt=0.1)
+            n_ode = simulator.integrate_mass_action(torch.exp(lparams), Ts_cpu, dt=0.1)
 
             scaledtime = self.Ts/self.Ts.min()
             # Compute loss (normalized L2 relative error)

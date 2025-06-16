@@ -57,7 +57,7 @@ print('It should run on: ',data.device)
 
 
 logposterior = lambda x: mcmc.logposterior(x,data)
-logposterior = lambda x: data.loglike(x)
+#logposterior = lambda x: data.loglike(x)
 
 lp_gt = logposterior(gt.to(data.device))
 lp_gt
