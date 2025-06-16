@@ -263,7 +263,8 @@ class SyntheticSimulator:
     
     def sample_data(self, size=None, Ts=[48]):
         """Simulate and dilute counts for multiple timepoints in a single batch."""
-        Ts = torch.tensor(Ts, device=self.device).float()
+        #Ts = torch.tensor(Ts, device=self.device).float()
+        Ts = Ts.clone().to(self.device).float()
         T_batch = Ts.repeat_interleave(size)  # shape: (len(Ts) * size,)
         n_sam = self.sample_n(T=T_batch,size=T_batch.numel()).cpu().numpy()
 

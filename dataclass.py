@@ -42,6 +42,7 @@ class dataset():
         # Unique measurement times and row-to-timepoint mapping
         self.times, self.T_index = torch.unique(torch.tensor(ts), return_inverse=True)
         self.T_index = self.T_index.to(device)
+        self.times = self.times.to(device)
         print('Dataset loaded successfully.')
 
     def lpkdil_ns(self, ns, reduce=False, concat=False):
