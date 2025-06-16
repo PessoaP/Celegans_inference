@@ -66,6 +66,7 @@ params = mcmc.prior.sample()
 
 params = data.ode_initialization(params)
 lp = logposterior(params)
+print ('Ground truth log posterior', lp)
 
 ### Does the initialization makes sense?
 
