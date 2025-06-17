@@ -99,7 +99,6 @@ mcmc_params = []
 mcmc_lps = []
 
 L = 1e-2 *torch.tensor((1,1,1,5),device=data.device)  # scalar proposal for burn1
-#cov_init = 1e-4*torch.eye(dim).to(data.device)
 
 total_steps = n_burn1 + n_burn2 + n_mcmc
 
@@ -120,8 +119,12 @@ for s in tqdm(range(total_steps)):
         #It will save the full chain so far
         posterior_samples = np.array([s.cpu().numpy() for s in mcmc_params])
         np.savetxt('samples_so_far.csv',posterior_samples)
+        np.savetxt('logposterior_so_far.csv',np.array(mcmc_lps))
 
-posterior_samples = torch.stack(mcmc_params[-n_mcmc:]).cpu().numpy()
+posterior_samples = torch.stack(mcmc_params).cpu().numpy()
+df = pd.DataFrame(posterior_samples,columns=['Colonization','Replication','Capacity','Death'])
+df['log_posterior'] = np.array(mcmc_lps)
+df.to_csv('samples.csv', index=False)
 
 fig, ax = plt.subplots(1, 4, figsize=(16, 4))
 titles = ['Colonization rate (/h)','Replication rate (/h)','Capacity','Death rate (/h)']
@@ -137,9 +140,11 @@ formatter.set_scientific(True)
 
 ax[0].set_ylabel('Density')
 fig.tight_layout()
+plt.savefig('result.png',dpi=600)
 plt.show()
 
 plt.plot(mcmc_lps)
 plt.axhline(lp_gt.item(),color='r')
 plt.ylabel('Log posterior')
+plt.savefig('logposterior.png',dpi=600)
 
