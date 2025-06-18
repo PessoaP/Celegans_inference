@@ -12,7 +12,8 @@ value = torch.tensor((1/20, #alpha
 
 prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value))
 logposterior = lambda value,data: data.loglike(value)  + prior.log_prob(value).sum()
-L = 1e-2 *torch.diag((1,1,1,5),device=device)
+
+L = 1e-2 *torch.diag(torch.tensor((1,1,1,5),device=device))
 total_iter = 0
 # ---- Proposal Function ----
 
@@ -42,7 +43,7 @@ def adapt_covariance(sample_history, epsilon=1e-6, min_samples=100, fill_std=1e-
     if N < min_samples:
         mean = log_samples.mean(dim=0)
         extra = mean + fill_std * torch.randn((min_samples - N, d), device=sample_history.device)
-        log_samples = torch.cat([log_samples, extra], dim=0)
+        log_samples = torch.vstack([log_samples, extra], dim=0)
 
     cov = torch.cov(log_samples.T)
     scaling = (2.4 ** 2) / d
