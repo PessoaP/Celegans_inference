@@ -24,7 +24,7 @@ def proposal(th, L):
     return torch.exp(lprop)
 
 # ---- Covariance Adapter ----
-def adapt_covariance(sample_history, epsilon=1e-6, min_samples=100, fill_std=1e-2):
+def adapt_covariance(sample_history, epsilon=1e-3, min_samples=100, fill_std=1e-2):
     """
     Adapt covariance using log-space empirical samples.
 
@@ -43,7 +43,7 @@ def adapt_covariance(sample_history, epsilon=1e-6, min_samples=100, fill_std=1e-
     if N < min_samples:
         mean = log_samples.mean(dim=0)
         extra = mean + fill_std * torch.randn((min_samples - N, d), device=sample_history.device)
-        log_samples = torch.vstack([log_samples, extra], dim=0)
+        log_samples = torch.vstack([log_samples, extra])
 
     cov = torch.cov(log_samples.T)
     scaling = (2.4 ** 2) / d
