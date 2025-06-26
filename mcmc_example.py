@@ -84,16 +84,17 @@ plt.savefig('Initialization_result.png',dpi=600)
 # %%
 initial_guess=params 
 
-n_burn1 = 200 
-n_burn2 = 500
+n_burn1 = 20#0
+n_burn2 = 50#0
 n_mcmc = 2000 
+sample_window = 50 
 
     
 dim = 4
 params = initial_guess.clone().detach()#.double()
 lp = logposterior(params)
 
-mcmc_params = []
+mcmc_params = torch.zeros((n_burn1+n_burn2+n_mcmc,dim),device=params.device)
 mcmc_lps = []
 
 # scalar proposal for burn1
@@ -104,13 +105,19 @@ total_steps = n_burn1 + n_burn2 + n_mcmc
 greedy = False
 for s in tqdm(range(total_steps)):
     greedy = s < n_burn1
-    adapt = (not greedy) and (s<n_burn1+n_burn2)
+    adapt = (not greedy) and (s < n_burn1+n_burn2)
 
-    # ---- Step and store ----
+    # ---- Step and store ---
+    if adapt:
+        start = max(0, s - sample_window) # To initate the Gaussian noise padding during adaptive steps if the sample history isn't long enough yet
+        sample_history = (mcmc_params[start:s])
+    else:
+        sample_history = None   # for when we want to not call an adaptive step
+        
     params, lp = mcmc.next_MCMC_sample(logposterior, params, lp, 
                                        greedy=greedy, adapt=adapt,
-                                       sample_history=torch.stack(mcmc_params[n_burn1:s]))
-    mcmc_params.append(params*1)
+                                       sample_history=sample_history)
+    mcmc_params[s] = 1*params
     mcmc_lps.append(lp.item())
 
     if (s + 1) % 10 == 0:
@@ -127,7 +134,7 @@ for s in tqdm(range(total_steps)):
 
 
 # %%
-posterior_samples = torch.stack(mcmc_params[-n_mcmc:]).cpu().numpy()
+posterior_samples = (mcmc_params[-n_mcmc:]).cpu().numpy()
 
 # %%
 fig, ax = plt.subplots(1, 4, figsize=(16, 4))
@@ -150,6 +157,8 @@ plt.show()
 plt.plot(mcmc_lps)
 plt.axhline(lp_gt.item(),color='r')
 plt.ylabel('Log posterior')
+ly = np.max(mcmc_lps)
+plt.ylim(ly-100,ly)
 
 # %%
 
