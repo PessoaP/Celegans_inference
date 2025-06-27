@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib import ticker
 
 # === Imports ===
-from dataclass import TimeSeriesInferenceDataset
+from dataclass import dataset
 import mcmc
 from load_and_clean_real_data import load_and_clean_real_data
 from configure_plotting import configure_plotting
@@ -38,7 +38,7 @@ for day in days:
     ts = np.full(len(df_day), day * 24)
     counts = df_day["Counts"].to_numpy()
     dils = df_day["Dilution"].to_numpy()
-    ts_datasets.append(TimeSeriesInferenceDataset(ts, counts, dils, cutoff=300))
+    ts_datasets.append(dataset(ts, counts, dils, cutoff=300))
 
 # === Logposterior wrapper ===
 def logposterior(params):
