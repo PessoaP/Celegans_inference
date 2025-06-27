@@ -16,7 +16,7 @@ Functions:
 Assumes 4 reactions:
     R1: ∅ → E      (rate: α)
     R2: E → 2E     (rate: μE)
-    R3: 2E → E (rate: μE/k * E^2)
+    R3: 2E → E (rate: (μE-d)/k * E^2)
     R4: E → ∅      (rate: dE)
 """
 import torch
