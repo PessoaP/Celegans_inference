@@ -64,6 +64,9 @@ params = data.ode_initialization(params)
 lp = logposterior(params)
 
 # %%
+params
+
+# %%
 ### Does the initialization makes sense?
 
 t = df['Time'].to_numpy()
@@ -84,10 +87,10 @@ plt.savefig('Initialization_result.png',dpi=600)
 # %%
 initial_guess=params 
 
-n_burn1 = 20#0
-n_burn2 = 50#0
+n_burn1 = 200
+n_burn2 = 500
 n_mcmc = 2000 
-sample_window = 50 
+sample_window = 200
 
     
 dim = 4
@@ -109,7 +112,7 @@ for s in tqdm(range(total_steps)):
 
     # ---- Step and store ---
     if adapt:
-        start = max(0, s - sample_window) # To initate the Gaussian noise padding during adaptive steps if the sample history isn't long enough yet
+        start = max(n_burn1, s - sample_window) -1 # To initate the Gaussian noise padding during adaptive steps if the sample history isn't long enough yet
         sample_history = (mcmc_params[start:s])
     else:
         sample_history = None   # for when we want to not call an adaptive step
@@ -126,9 +129,13 @@ for s in tqdm(range(total_steps)):
         print('If it is running on GPU it should say CUDA:', params.device )
 
         #It will save the full chain so far
-        posterior_samples = np.array([s.cpu().numpy() for s in mcmc_params])
-        np.savetxt('samples_so_far.csv',posterior_samples)
+        posterior_samples = mcmc_params[:s].cpu().numpy()
+        np.savetxt('partial_samples.csv',posterior_samples)
+        np.savetxt('partial_lps.csv',mcmc_lps)
 
+posterior_samples = mcmc_params[:s].cpu().numpy()
+np.savetxt('final_samples.csv',posterior_samples[-n_mcmc:]) #Samples with burnin removed
+np.savetxt('final_lps.csv',mcmc_lps[-n_mcmc:])
 
 
 
@@ -151,14 +158,17 @@ formatter.set_scientific(True)
 
 ax[0].set_ylabel('Density')
 fig.tight_layout()
+plt.savefig('histograms.png',dpi=600)
 plt.show()
 
 # %%
 plt.plot(mcmc_lps)
 plt.axhline(lp_gt.item(),color='r')
 plt.ylabel('Log posterior')
-ly = np.max(mcmc_lps)
+ly = max(np.max(mcmc_lps),lp_gt+1)
 plt.ylim(ly-100,ly)
+
+plt.savefig('logpost.png',dpi=600)
 
 # %%
 

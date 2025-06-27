@@ -1,4 +1,5 @@
 import torch
+from simulator import ConstrainedLogNormalPrior
 
 #Define log posterior and check up in the lp_gt
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -10,7 +11,7 @@ value = torch.tensor((1/20, #alpha
                       .1 #d
                       )).to(device) 
 
-prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value))
+prior = ConstrainedLogNormalPrior(torch.log(value),torch.ones_like(value))
 logposterior = lambda value,data: data.loglike(value)  + prior.log_prob(value).sum()
 
 L = 1e-2 *torch.diag(torch.tensor((1,1,1,5),device=device))
@@ -58,7 +59,6 @@ def next_MCMC_sample(logposterior, params, lp, greedy=False, adapt=False, sample
     total_iter +=1
 
     if adapt:
-        assert sample_history is not None and len(sample_history) > 1, "Need history for adaptation"
         L = adapt_covariance(sample_history)
 
     if total_iter%2 == 0:

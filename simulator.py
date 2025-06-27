@@ -43,7 +43,7 @@ def get_rates(E, params):
     rates = torch.stack((
         alpha,
         mu_E * E,
-        (mu_E / k) * E * E,
+        ((mu_E-d) / k) * E * E,
         d * E
     ), dim=-1)
     return rates
@@ -215,6 +215,22 @@ def sample(params, E_initial=None, T=48, N=None,
     return t, E
 
 
+class ConstrainedLogNormalPrior:
+    def __init__(self, loc, scale):
+        self.base = torch.distributions.LogNormal(loc, scale)
+
+    def log_prob(self, x):
+        if x[1] < x[3]:
+            return torch.tensor(float('-inf'))
+        return self.base.log_prob(x).sum()
+
+    def sample(self):
+        for _ in range(1000):
+            x = self.base.sample()
+            if x[1] >= x[3]:
+                return x
+        raise RuntimeError("Failed to sample satisfying x[1] >= x[3] after 100 attempts.")
+
 
 
 class SyntheticSimulator:
@@ -309,7 +325,7 @@ if __name__ == "__main__":
     
     value = torch.tensor((1/20, #alpha
                           1/4, #mu
-                          2*1e5, #k
+                          1e5, #k
                           .1 #d
                         )).to(device) 
     if seed == 0:
@@ -337,7 +353,7 @@ if __name__ == "__main__":
 
 
     else:
-        prior = torch.distributions.LogNormal(torch.log(value),torch.ones_like(value))
+        prior = ConstrainedLogNormalPrior(torch.log(value),torch.ones_like(value))
         params = prior.sample()
         np.savetxt('synthetic_data/gt_map.csv', 
                    np.vstack((np.loadtxt('synthetic_data/gt_map.csv'),

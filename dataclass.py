@@ -137,6 +137,7 @@ class dataset():
             scaledtime = self.Ts/self.Ts.min()
             # Compute loss (normalized L2 relative error)
             loss = l2((target/n_ode-1)/(scaledtime**2)) *self.Ts.min()/ self.ndatapoints
+            #loss = l2( (target - n_ode)/scaledtime )/ self.ndatapoints
             #print(target/n_ode)
             
 
