@@ -1,5 +1,10 @@
+# for non-time-limited feeding experiments 
+
+import numpy as np
+import pandas as pd
+
 """
-hybrid_sim.py
+simulator.py
 
 Hybrid stochastic simulation of a 1D birth-death process with nonlinear rates
 using Gillespie (SSA) and tau-leaping methods in PyTorch.
@@ -39,6 +44,8 @@ def get_rates(E, params):
     torch.Tensor, shape (N, 4)
         Rates for 4 reactions.
     """
+    # Ensure E and params are on same device
+    E = E.to(params.device)
     alpha, mu_E, k, d = params
     rates = torch.stack((
         alpha,
@@ -104,7 +111,7 @@ def tau_leap(params, E, dt_max):
     exp_change = torch.abs((rates*S).sum(axis=1))
     # Choose dt such that the expected *net* change in E during dt is approximately E / 100
     dt = (E / 101) / exp_change
-    dt.clamp(max=.1)
+    dt = dt.clamp(max=.1)
 
     change = dt < dt_max
     dt[~change] = dt_max[~change]
@@ -174,6 +181,7 @@ def sample(params, E_initial=None, T=48, N=None,
     t : torch.Tensor, shape (N,)
     E : torch.Tensor, shape (N,)
     """
+    params = params.to(device)
     # Infer N from E_initial if not provided
     if N is None:
         if E_initial is None:
@@ -221,171 +229,44 @@ class ConstrainedLogNormalPrior:
 
     def log_prob(self, x):
         if x[1] < x[3]:
-            return torch.tensor(float('-inf'))
+            return torch.tensor(float('-inf'), device=x.device)
         return self.base.log_prob(x).sum()
 
     def sample(self):
         for _ in range(1000):
-            x = self.base.sample()
+            x = self.base.sample().to(self.base.loc.device)
             if x[1] >= x[3]:
                 return x
         raise RuntimeError("Failed to sample satisfying x[1] >= x[3] after 100 attempts.")
-
-
-
-class SyntheticSimulator:
-    """
-    Simulates counts from a stochastic growth model at different times,
-    applies dilution, and exports results to CSV.
-    """
-
-    def __init__(self, params, cutoff=300, 
-                 dil_schedule=20.0 * torch.pow(10, torch.arange(4)), name='default', 
-                 device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
-        """Initialize simulator with model parameters, cutoff, dilution schedule, and device."""
-        self.params = params
-        self.cutoff = cutoff
-        self.dil_schedule = dil_schedule 
-        self.name = name
-        self.device = device 
-        os.makedirs("synthetic_data", exist_ok=True)
-
-    def multinomial_with_completion(self, n, probs):
-        """Draw from a multinomial with possibly incomplete probability mass."""
-        sum_probs = probs.sum()
-        if sum_probs < 1:
-            probs = np.append(probs, 1 - sum_probs)
-        samples = np.random.multinomial(n, probs)
-        return samples[:-1] if sum_probs < 1 else samples
-
-    def make_data(self, n_sam):
-        """Simulate diluted observed counts from true counts using dilution schedule."""
-        cts = np.zeros_like(n_sam)
-        dil = np.zeros_like(n_sam)*1.
-        probs = 1 / self.dil_schedule.cpu().numpy()
-
-        for i in range(n_sam.size):
-            ks = self.multinomial_with_completion(n_sam[i], probs)
-            idx = np.argmax(ks <= self.cutoff) if np.any(ks <= self.cutoff) else len(ks) - 1
-            cts[i] = ks[idx]
-            dil[i] = self.dil_schedule[idx].item()
-
-        return cts, dil
-
-    def sample_n(self, size=None, T=[48]):
-        """Simulate true counts at time T for a given sample size."""
-        _, E = sample(self.params, T=T, N=size, device=self.device)
-        return E
-    
-    def sample_data(self, size=None, Ts=[48]):
-        """Simulate and dilute counts for multiple timepoints in a single batch."""
-        #Ts = torch.tensor(Ts, device=self.device).float()
-        Ts = Ts.clone().to(self.device).float()
-        T_batch = Ts.repeat_interleave(size)  # shape: (len(Ts) * size,)
-        n_sam = self.sample_n(T=T_batch,size=T_batch.numel()).cpu().numpy()
-
-        if isinstance(self.dil_schedule, torch.Tensor):
-            cts, dils = self.make_data(n_sam)
-        else:
-            dils = np.ones_like(n_sam) * self.dil_schedule
-            cts = np.random.binomial(n_sam, 1.0 / dils)
-
-
-        df = pd.DataFrame({
-            'Time': T_batch.cpu().numpy(),
-            'Counts': cts,
-            'Dilution': dils
-        })
-
-        return df
-
-    def sample_save(self, size=100, Ts=[48], filename=''):
-        """Run simulation and save the output as a CSV with counts and dilutions."""
-        if filename == '':
-            filename = f'synthetic_data/synth_{self.name}.csv'
-        df = self.sample_data(size, Ts)
-        df.to_csv(filename, index=False)
-
-
-
-if __name__ == "__main__":
-    import sys, os
-    import numpy as np
-    import pandas as pd
-    from matplotlib import pyplot as plt
-
-
-    try:
-        seed = int(sys.argv[1])
-    except:
-        seed = 0
-
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    
-    value = torch.tensor((1/20, #alpha
-                          1/4, #mu
-                          1e5, #k
-                          .1 #d
-                        )).to(device) 
-    if seed == 0:
-        
-        E = torch.zeros(20)
-        Es = []
-        dT = .2
-        ts = torch.arange(0,4*24,dT)
-
-        for t in ts:
-            tt,E = sample(value,E,dT)
-            Es.append(E)
-        for es in torch.vstack(Es).T[-20:]:
-            plt.plot(ts,es.cpu())
-        plt.xlim(0,ts[-1])  
-        plt.xlabel('Time(h)') 
-        plt.ylabel('Bacterial number')
-        plt.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
-
-        os.makedirs("synthetic_data", exist_ok=True)
-        plt.savefig('synthetic_data/example.png',dpi=500)  
-
-        params = value
-        np.savetxt('synthetic_data/gt_map.csv', np.hstack((np.array((seed)),value.cpu())))
-
-
-    else:
-        prior = ConstrainedLogNormalPrior(torch.log(value),torch.ones_like(value))
-        params = prior.sample()
-        np.savetxt('synthetic_data/gt_map.csv', 
-                   np.vstack((np.loadtxt('synthetic_data/gt_map.csv'),
-                              np.hstack((np.array((seed)),params.cpu())))) )
-
-    print(params)
-    sim = SyntheticSimulator(params=params,
-                             name=f'seed{seed}',
-                             dil_schedule=20. * torch.pow(10, torch.arange(4)),
-                             device=device)
-
-    sim.sample_save(size=100, Ts=torch.arange(5)*48 + 24)
 
 
 def integrate_mass_action(params, Ts, dt=0.1,device='cpu'):
     """
     Simulate ODE trajectories from E=0 using Euler method.
     """
+    params = params.to(device)
     S_ma = S.to(device)
     E = torch.zeros(1,device=device)
     t = 0
 
     dEdt = lambda Ex: (get_rates(Ex,params.reshape(-1,1))*S_ma).sum(axis=1)
     
+    # Make sure Ts is a tensor on cpu
+    if not isinstance(Ts, torch.Tensor):
+        Ts = torch.tensor(Ts, device='cpu').float()
+    else:
+        Ts = Ts.to('cpu').float()
+
     Es = []
     for T in Ts:
-        while t + dt <T:
-            E = E + dEdt(E)*dt
-            t += dt
-
-        E = E + dEdt(E)*(T-t)
+        if not isinstance(T, torch.Tensor):
+            T = torch.tensor(T, device='cpu').float()
+        else:
+            T = T.to('cpu').float()
+        while t + dt < T:
+            E = E + dEdt(E) * dt
+            t = t + dt
+        E = E + dEdt(E) * (T - t)
         t = T
-
-        Es.append(E*1)
+        Es.append(E.clone())
     return torch.stack(Es)
