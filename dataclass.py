@@ -1,12 +1,12 @@
 import torch
 import repop
 import simulator
-from numpy import log
 from tqdm import tqdm
 
 def simulate_for_likelihood(params, times, Nsamples=2**15):
     """Simulate population trajectories up to each time in `times`."""
     
+    times = times.to(params.device)
     t,E = simulator.sample(params, N=Nsamples, T=times[0])
     simulations = [E.int()]
     for T in times[1:]:
@@ -15,36 +15,45 @@ def simulate_for_likelihood(params, times, Nsamples=2**15):
         simulations.append(E.int())
     return simulations
 
-class dataset():
+class TimeSeriesInferenceDataset():
     def __init__(self, ts, counts, dils, cutoff=300, 
                  device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
         self.device = device
         
-        # Convert counts and dilutions to tensors and send to device
-        self.counts = torch.tensor(counts.reshape(-1, 1))
-        self.dils = torch.tensor(dils.reshape(-1, 1))
-        self.Ts = torch.tensor(ts.reshape(-1, 1))
+        # Always process these first on CPU
+        cpu = torch.device('cpu')
+        def to_cpu_tensor(arr):
+            if isinstance(arr, torch.Tensor):
+                return arr.reshape(-1, 1).clone().detach().to(cpu)
+            return torch.tensor(arr, device=cpu).reshape(-1, 1)
 
-        # Define upper bound for total number of cells
-        self.Nmax = 2 * (counts * dils).max() + 1
-        self.n = torch.arange(self.Nmax)
+        self.counts = to_cpu_tensor(counts)
+        self.dils   = to_cpu_tensor(dils)
+        self.Ts     = to_cpu_tensor(ts)
+
+        self.Nmax = int(2 * (self.counts * self.dils).max().item() + 1)
+        self.n = torch.arange(self.Nmax, device=cpu)
 
         self.ndatapoints = self.counts.size(0)
         self.cutoff = cutoff
 
-        # Compute log p(k, phi | n ) via REPOP
-        # Before here is better done on CPU. 
+        # Now call REPOP on CPU
         self.lpkdil_n = repop.get_lpkdil_n(self.counts, self.dils, self.n, 
-                                           cutoff, self.Nmax).to(device) 
-        #only now we start on GPU
+                                           cutoff, self.Nmax).to(self.device) 
+        # Only here do we switch to the chosen device (GPU or CPU)
+
+        # Move times and index to device after REPOP
+        self.Ts = self.Ts.to(self.device)
+        self.counts = self.counts.to(self.device)
+        self.dils = self.dils.to(self.device)
+        self.n = self.n.to(self.device)
+
+        self.times, self.T_index = torch.unique(self.Ts, return_inverse=True)
+        self.T_index = self.T_index.to(self.device)
+        self.times = self.times.to(self.device)
+        print(f'Dataset loaded: {self.ndatapoints} points, {len(self.times)} timepoints.')
+
         
-
-        # Unique measurement times and row-to-timepoint mapping
-        self.times, self.T_index = torch.unique(torch.tensor(ts), return_inverse=True)
-        self.T_index = self.T_index.to(device)
-        self.times = self.times.to(device)
-        print('Dataset loaded successfully.')
-
     def lpkdil_ns(self, ns, reduce=False, concat=False):
         """
         Selects (and optionally reduces) log p(k | n, phi) across relevant n for each time t.
@@ -60,8 +69,8 @@ class dataset():
         list_lpkdil_ns = []
 
         for t in range(len(self.times)):
-            mask = (self.T_index == t)
-            lpk = self.lpkdil_n[mask]  # (num_datapoints_t, Nmax)
+            mask = (self.T_index == t).reshape(-1)  # Always shape (ndatapoints,)
+            lpk = self.lpkdil_n[mask]
 
             n_indices = ns[t]#.to(self.device)
 
@@ -75,12 +84,13 @@ class dataset():
 
             valid_mask = n_indices < self.Nmax
             valid_n = n_indices[valid_mask]
+            valid_n = valid_n.reshape(-1)
 
             if valid_n.numel() > 0:
                 lpk_condensed[:, valid_mask] = lpk[:, valid_n]
 
             if reduce:
-                lpk_condensed = torch.logsumexp(lpk_condensed, dim=1) - log(len(n_indices))
+                lpk_condensed = torch.logsumexp(lpk_condensed, dim=1) - torch.log(torch.tensor(float(len(n_indices)), device=self.device))
 
             list_lpkdil_ns.append(lpk_condensed)
 
@@ -101,58 +111,50 @@ class dataset():
             Scalar log-likelihood estimate via log-sum-exp over ns.
         """
         ns = simulate_for_likelihood(value, self.times, Nsamples)
+        self.last_simulated_ns = ns  # so we can save the summary statistics of the trajectories later
         log_probs = self.lpkdil_ns(ns, reduce=True, concat=True)
-        #del ns
         return torch.sum(log_probs, dim=0)
 
     def ode_initialization(self, init=None):
         """
-        Initialize parameters for ODE fitting via gradient descent.
+        Initialize parameters for ODE fitting via gradient descent (on CPU).
         """
-        # If no initialization is provided, start from a zero vector (log(1) = 0)
+        # Always move everything to CPU for ODE initialization
+        target = (self.counts * self.dils).cpu()
+        Ts_cpu = self.Ts.cpu().float()
+        ndatapoints = self.ndatapoints  # This should be an int already
+
+        # Start from init or reasonable guess (ensure CPU)
         if init is None:
-            init = torch.tensor((1/24,1e-2,
-                                 target[self.Ts==self.Ts.max()].median(),
-                                 1e-4))
+            init = torch.tensor([1/24, 1e-2, float(target[Ts_cpu == Ts_cpu.max()].median()), 1e-4], dtype=torch.float32, device='cpu')
+        else:
+            init = init.detach().cpu().float()
 
-        lparams = torch.log(init.data).to('cpu')
+        lparams = torch.log(init).clone().detach().requires_grad_()
 
-        target = self.counts * self.dils
-
-        # Optimizer and loss function
-        lparams.requires_grad_()
         optimizer = torch.optim.Adam([lparams], lr=.01)
-        l2 = lambda x: torch.sqrt((x * x).sum())  # L2 norm
+        l2 = lambda x: torch.sqrt((x * x).sum())
         loss_hist = []
 
-        print('Initializing using mass-action similarity')
-        Ts_cpu = self.Ts.clone().cpu().float()
-
+        print('Initializing using mass-action similarity (CPU)')
         for it in tqdm(range(500)):
             optimizer.zero_grad()
 
-            # Simulate ODE with current parameters
-            n_ode = simulator.integrate_mass_action(torch.exp(lparams), Ts_cpu, dt=0.1)
+            # Simulate ODE with current parameters (all CPU)
+            n_ode = simulator.integrate_mass_action(torch.exp(lparams), Ts_cpu, dt=0.1, device='cpu')
 
-            scaledtime = self.Ts/self.Ts.min()
-            # Compute loss (normalized L2 relative error)
-            loss = l2((target/n_ode-1)/(scaledtime**2)) *self.Ts.min()/ self.ndatapoints
-            #loss = l2( (target - n_ode)/scaledtime )/ self.ndatapoints
-            #print(target/n_ode)
-            
+            scaledtime = Ts_cpu / Ts_cpu.min()
+            loss = l2((target / n_ode - 1) / (scaledtime ** 2)) * Ts_cpu.min() / ndatapoints
 
-            # Check for valid loss before applying backward
-            if ~(torch.isnan(loss) | torch.isinf(loss)):
+            if not (torch.isnan(loss) or torch.isinf(loss)):
                 loss.backward()
                 optimizer.step()
-
                 loss_hist.append(loss.item())
-
                 if (it + 1) % 10 == 0:
                     gradient_norm = l2(lparams.grad).item()
-                    print('gradient:', gradient_norm, loss_hist[-1]  )
-
-                    if gradient_norm<1e-5:
+                    print('gradient:', gradient_norm, loss_hist[-1])
+                    if gradient_norm < 1e-5:
                         break
-        # Return parameters in original (non-log) space
+
+        # Return parameters in original (non-log) space, **move to desired device**
         return torch.exp(lparams).detach().to(self.device)
