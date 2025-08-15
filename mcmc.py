@@ -39,11 +39,44 @@ def make_logposterior(data, prior):
     return logposterior
 
 # === Proposal Function ===
+# Perturbs all parameter values simultaneously
 def proposal(th, L):
     lth = torch.log(th)
     noise = torch.randn_like(th)
     lprop = lth + noise @ L.T
     return torch.exp(lprop)
+    
+# === Proposal Function that account for full covariance ===
+def block_proposal(th, L, update_idx):
+    """
+    Propose new parameters by updating only those at update_idx,
+    using the correct joint covariance among them (full Cholesky submatrix).
+    
+    Args:
+        th (torch.Tensor): Current parameter vector (shape [d])
+        L (torch.Tensor): Cholesky factor of covariance (shape [d, d])
+        update_idx (list of int): Indices to update jointly
+
+    Returns:
+        torch.Tensor: Proposed parameter vector (shape [d])
+    """
+    d = th.shape[0]
+    lth = torch.log(th)
+    prop = lth.clone()
+
+    # Extract submatrix of L for the block
+    L_block = L[update_idx, :][:, update_idx]  # shape (k, k) where k = len(update_idx)
+
+    # Sample block noise and transform
+    noise_block = torch.randn(len(update_idx), device=L_block.device) # make sure all tensors are on the same device
+    proposal_block = noise_block @ L_block.T  # shape (k,)
+
+    # Insert proposal_block into prop at update_idx
+    for i, idx in enumerate(update_idx):
+        prop[idx] += proposal_block[i]
+
+    return torch.exp(prop)
+
 
 # === Covariance Adapter ===
 def adapt_covariance(sample_history, epsilon=1e-3, min_samples=100, fill_std=1e-2, output_dir=None):
@@ -94,14 +127,51 @@ class SamplerState:
         self.iter = state['iter']
 
 # === MCMC Step ===
-def next_MCMC_sample(logposterior, params, lp, state, greedy=False, adapt=False, sample_history=None, output_dir=None):
+def next_MCMC_sample(logposterior, params, lp, state, greedy=False, adapt=False, sample_history=None, output_dir=None, update_idx=None):
+    """
+    Performs one MCMC step, proposing only parameters at update_idx using block_proposal.
+    If update_idx is None, proposes all parameters (default behavior).
+    """
     state.iter += 1
 
     if adapt:
         state.L = adapt_covariance(sample_history, output_dir)
 
-    if state.iter % 2 == 0:
-        lp = logposterior(params)
+    lp = logposterior(params)
+
+    # Default: update all parameters
+    if update_idx is None:
+        update_idx = list(range(len(params)))
+
+    print(f"Calling block_proposal with update_idx={update_idx}")
+    params_prop = block_proposal(params, state.L, update_idx)
+    lp_prop = logposterior(params_prop)
+
+    if (
+        not torch.isfinite(lp_prop)
+        or not torch.all(torch.isfinite(params_prop))
+        or not torch.all(params_prop > 0)
+    ):
+        print(
+            f"[Warning] Rejected bad proposal at iteration {state.iter}: "
+            f"non-finite or non-positive values detected."
+        )
+        return params, lp, state, False
+
+    accept = lp_prop > lp if greedy else torch.log(torch.rand(1)).item() < (lp_prop - lp).item()
+    if accept:
+        return params_prop, lp_prop, state, True
+    return params, lp, state, False
+    
+# === OUTDATED MCMC Step BUT WITH RECALCULATED LP EACH ITERATION ===
+def next_MCMC_sample_OLD(logposterior, params, lp, state, greedy=False, adapt=False, sample_history=None, output_dir=None):
+    state.iter += 1
+
+    if adapt:
+        state.L = adapt_covariance(sample_history, output_dir)
+
+    #if state.iter % 2 == 0:  Calculate the log-posterior of the parameters for the proposal to be compared to only every 2 steps
+    lp = logposterior(params)
 
     params_prop = proposal(params, state.L)
     lp_prop = logposterior(params_prop)
