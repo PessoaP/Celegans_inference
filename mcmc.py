@@ -1,194 +1,130 @@
-import os
 import torch
-import numpy as np
 from simulator import ConstrainedLogNormalPrior
 
-# === Prior Construction from ODE Initialization ===
-def make_prior_from_initial_guess(dataset, frac_error=0.5, device=None):
+#Define log posterior and check up in the lp_gt
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+value = torch.tensor((1/20, #alpha
+                      1/4, #mu
+                      2*1e5, #k
+                      .1 #d
+                      )).to(device) 
+
+prior = ConstrainedLogNormalPrior(torch.log(value),torch.ones_like(value))
+logposterior = lambda value,data: data.loglike(value)  + prior.log_prob(value).sum()
+
+#L = 1e-2 *torch.diag(torch.tensor((1,1,1,5),device=device))
+L = 1e-2 *torch.tensor((1,1,1,5),device=device)
+total_iter = 0
+
+# ---- Forward & inverse transforms -------------------------------------------
+def _forward_transform(theta):
     """
-    Construct a log-normal prior centered at ODE-initialized parameter estimates,
-    with fractional uncertainty in linear space.
-
-    Parameters:
-        dataset (TimeSeriesInferenceDataset): Combined dataset across all days
-        frac_error (float): Relative uncertainty in linear space (e.g., 0.5 means ±50%)
-        device (torch.device or None): Optionally move prior parameters to a device
-
-    Returns:
-        prior (ConstrainedLogNormalPrior): Prior centered on ODE init with log-scale stddev
-        init_guess (torch.Tensor): The ODE-initialized parameter vector
+    theta: (..., 4) = (colonization, replication, capacity, expulsion)
+    Returns tuple of tensors (u0, d, u2, r) where:
+      u0 = log(colonization)
+       d = replication - expulsion
+      u2 = log(capacity)
+       r = log(replication / expulsion)
     """
-    default_guess = torch.tensor([1/20, 1/4, 2e5, 0.1], dtype=torch.float32, device=device)  # hardcoded for 4 parameters
-    baseline_prior = ConstrainedLogNormalPrior(torch.log(default_guess), torch.ones_like(default_guess))
+    th0, th1, th2, th3 = theta[..., 0], theta[..., 1], theta[..., 2], theta[..., 3]
+    u0 = torch.log(th0)        # colonization in log-space
+    d  = th1 - th3             # replication - expulsion
+    u2 = torch.log(th2)        # capacity in log-space
+    r  = torch.log(th1) - torch.log(th3)  # log(replication / expulsion)
+    return (u0, d, u2, r)
 
-    init_guess = dataset.ode_initialization(baseline_prior.sample()).detach()
-    if not torch.all(init_guess > 0):
-        init_guess = torch.clamp(init_guess, min=1e-8) # make sure all the parameter values are >0
-    if device is not None:
-        init_guess = init_guess.to(device)
-
-    logmean = torch.log(init_guess)
-    logstd  = torch.log(torch.tensor(1 + frac_error, device=device)) * torch.ones_like(logmean)
-    prior = ConstrainedLogNormalPrior(logmean, logstd)
-    return prior, init_guess
-
-# === Logposterior Constructor ===
-def make_logposterior(data, prior):
-    def logposterior(params):
-        return data.loglike(params) + prior.log_prob(params).sum()
-    return logposterior
-
-# === Proposal Function ===
-# Perturbs all parameter values simultaneously
-def proposal(th, L):
-    lth = torch.log(th)
-    noise = torch.randn_like(th)
-    lprop = lth + noise @ L.T
-    return torch.exp(lprop)
-    
-# === Proposal Function that account for full covariance ===
-def block_proposal(th, L, update_idx):
+def _inverse_transform(u0, d, u2, r, eps=1e-12):
     """
-    Propose new parameters by updating only those at update_idx,
-    using the correct joint covariance among them (full Cholesky submatrix).
-    
-    Args:
-        th (torch.Tensor): Current parameter vector (shape [d])
-        L (torch.Tensor): Cholesky factor of covariance (shape [d, d])
-        update_idx (list of int): Indices to update jointly
+    Map (u0, d, u2, r) back to (th0, th1, th2, th3) =
+    (colonization, replication, capacity, expulsion).
 
-    Returns:
-        torch.Tensor: Proposed parameter vector (shape [d])
+    Uses expm1 for numerical stability when r ~ 0.
     """
-    d = th.shape[0]
-    lth = torch.log(th)
-    prop = lth.clone()
+    th0 = torch.exp(u0)   # colonization
+    th2 = torch.exp(u2)   # capacity
 
-    # Extract submatrix of L for the block
-    L_block = L[update_idx, :][:, update_idx]  # shape (k, k) where k = len(update_idx)
+    # Recover replication (th1) and expulsion (th3) from d and r:
+    er_minus_1 = torch.expm1(r)
+    small = er_minus_1.abs() < eps
+    denom = torch.where(small, r, er_minus_1)  # e^r - 1 ~ r when r ~ 0
 
-    # Sample block noise and transform
-    noise_block = torch.randn(len(update_idx), device=L_block.device) # make sure all tensors are on the same device
-    proposal_block = noise_block @ L_block.T  # shape (k,)
+    th3 = d / denom             # expulsion
+    th1 = th3 * torch.exp(r)    # replication
 
-    # Insert proposal_block into prop at update_idx
-    for i, idx in enumerate(update_idx):
-        prop[idx] += proposal_block[i]
+    return torch.stack([th0, th1, th2, th3], dim=-1)
 
-    return torch.exp(prop)
-
-
-# === Covariance Adapter ===
-def adapt_covariance(sample_history, epsilon=1e-3, min_samples=100, fill_std=1e-2, output_dir=None):
-    # Ensure tensor type first
-    if isinstance(sample_history, np.ndarray):
-        sample_history = torch.from_numpy(sample_history).float()
-    
-    # Check shape and device
-    N, d = sample_history.shape
-    d = int(d)
-    N = int(N)
-    device = sample_history.device if hasattr(sample_history, "device") else "cpu"
-
-    assert torch.all(sample_history > 0), "Sample history contains non-positive values!"
-    log_samples = torch.log(sample_history)
-
-    if output_dir is not None:
-        np.savetxt(os.path.join(output_dir, 'prefill_cholesky.csv'), log_samples.cpu().numpy())
-
-    if N < min_samples:
-        mean = log_samples.mean(dim=0)
-        extra = mean + fill_std * torch.randn((min_samples - N, d), device=device)
-        log_samples = torch.vstack([log_samples, extra])
-
-    # Defensive: after filling, make sure log_samples is float32 (for torch.cov on GPU)
-    log_samples = log_samples.float()
-
-    cov = torch.cov(log_samples.T)
-    scaling = (2.4 ** 2) / d
-    scaled_cov = scaling * cov + epsilon * torch.eye(d, device=device, dtype=log_samples.dtype)
-
-    if output_dir is not None:
-        np.savetxt(os.path.join(output_dir, 'postfill_cholesky.csv'), log_samples.cpu().numpy())
-
-    return torch.linalg.cholesky(scaled_cov)
-
-# === SamplerState Object ===
-class SamplerState:
-    def __init__(self, L, iter_num=0):
-        self.L = L
-        self.iter = iter_num
-
-    def state_dict(self):
-        return {'L': self.L, 'iter': self.iter}
-
-    def load_state_dict(self, state):
-        self.L = state['L']
-        self.iter = state['iter']
-
-# === MCMC Step ===
-def next_MCMC_sample(logposterior, params, lp, state, greedy=False, adapt=False, sample_history=None, output_dir=None, update_idx=None):
+# ---- Proposal in transformed space ------------------------------------------
+def proposal(theta, L):
     """
-    Performs one MCMC step, proposing only parameters at update_idx using block_proposal.
-    If update_idx is None, proposes all parameters (default behavior).
+    Random-walk proposal using a Gaussian in transformed coords.
+
+    theta: (..., 4) = (colonization, replication, capacity, expulsion)
+    L: (4, 4) Cholesky-like factor; covariance in transformed space is Σ = L L^T
+
+    Returns: tuple (th0', th1', th2', th3') =
+             (colonization', replication', capacity', expulsion')
     """
-    state.iter += 1
+    u0, d, u2, r = _forward_transform(theta)
 
-    if adapt:
-        state.L = adapt_covariance(sample_history, output_dir)
+    # Add independent Gaussian noise to each transformed variable
+    u0p = u0 + L[0] * torch.randn_like(u0)  # colonization (log)
+    dp  = d  + L[1] * torch.randn_like(d)   # replication - expulsion
+    u2p = u2 + L[2] * torch.randn_like(u2)  # capacity (log)
+    rp  = r  + L[3] * torch.randn_like(r)   # log(replication/expulsion)
 
-    lp = logposterior(params)
+    return _inverse_transform(u0p, dp, u2p, rp)
 
-    # Default: update all parameters
-    if update_idx is None:
-        update_idx = list(range(len(params)))
 
-    print(f"Calling block_proposal with update_idx={update_idx}")
-    params_prop = block_proposal(params, state.L, update_idx)
+
+# # ---- Covariance Adapter ----
+# def adapt_covariance(sample_history, epsilon=1e-3, min_samples=100, fill_std=1e-2):
+#     """
+#     Adapt covariance using log-space empirical samples.
+
+#     Parameters:
+#         sample_history (torch.Tensor): Tensor of shape (N, d), in original (not log) space.
+#         epsilon (float): Stability jitter for Cholesky.
+#         min_samples (int): Minimum number of samples to build a reliable covariance.
+#         fill_std (float): Std of Gaussian noise used to fill when n < min_samples.
+
+#     Returns:
+#         torch.Tensor: Cholesky factor (L) of scaled covariance matrix.
+#     """
+#     N, d = sample_history.shape
+#     log_samples = torch.log(sample_history)
+
+#     if N < min_samples:
+#         mean = log_samples.mean(dim=0)
+#         extra = mean + fill_std * torch.randn((min_samples - N, d), device=sample_history.device)
+#         log_samples = torch.vstack([log_samples, extra])
+
+#     cov = torch.cov(log_samples.T)
+#     scaling = (2.4 ** 2) / d
+#     scaled_cov = scaling * cov + epsilon * torch.eye(d, device=sample_history.device)
+
+#     return torch.linalg.cholesky(scaled_cov)
+
+# ---- Single MCMC Step with Optional Adaptation ----
+def next_MCMC_sample(logposterior, params, lp, greedy=False, adapt=False, sample_history=None):
+    global L 
+    global total_iter
+    total_iter +=1
+
+    # if adapt:
+    #     L = adapt_covariance(sample_history)
+
+    if total_iter%2 == 0:
+        lp = logposterior(params)
+
+    params_prop = proposal(params, L)
     lp_prop = logposterior(params_prop)
 
-    if (
-        not torch.isfinite(lp_prop)
-        or not torch.all(torch.isfinite(params_prop))
-        or not torch.all(params_prop > 0)
-    ):
-        print(
-            f"[Warning] Rejected bad proposal at iteration {state.iter}: "
-            f"non-finite or non-positive values detected."
-        )
-        return params, lp, state, False
-
-    accept = lp_prop > lp if greedy else torch.log(torch.rand(1)).item() < (lp_prop - lp).item()
+    if greedy:
+        accept = lp_prop > lp
+    else:
+        accept = torch.log(torch.rand(1)).item() < (lp_prop - lp).item()
     if accept:
-        return params_prop, lp_prop, state, True
-    return params, lp, state, False
-    
-# === OUTDATED MCMC Step BUT WITH RECALCULATED LP EACH ITERATION ===
-def next_MCMC_sample_OLD(logposterior, params, lp, state, greedy=False, adapt=False, sample_history=None, output_dir=None):
-    state.iter += 1
-
-    if adapt:
-        state.L = adapt_covariance(sample_history, output_dir)
-
-    #if state.iter % 2 == 0:  Calculate the log-posterior of the parameters for the proposal to be compared to only every 2 steps
-    lp = logposterior(params)
-
-    params_prop = proposal(params, state.L)
-    lp_prop = logposterior(params_prop)
-
-    if (
-        not torch.isfinite(lp_prop)
-        or not torch.all(torch.isfinite(params_prop))
-        or not torch.all(params_prop > 0)   # make sure only positive proposal values are ever accepted 
-    ):
-        print(
-            f"[Warning] Rejected bad proposal at iteration {state.iter}: "
-            f"non-finite or non-positive values detected."
-        )
-        return params, lp, state, False
-
-    accept = lp_prop > lp if greedy else torch.log(torch.rand(1)).item() < (lp_prop - lp).item()
-    if accept:
-        return params_prop, lp_prop, state, True
-    return params, lp, state, False
-
+        return (params_prop, lp_prop)
+    return (params, lp)
