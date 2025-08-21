@@ -62,7 +62,7 @@ full_dataset = TimeSeriesInferenceDataset(ts, counts, dils, cutoff=300)
 ground_truth = torch.tensor([1/20, 1/4, 1e5, 0.1], device=device) 
 
 simulation_times, lls, Nsamples = [],[],[]
-for i in range(10,30):
+for i in range(10,12):#30):
     for j in range(10):
         start = time.time()
         ll = full_dataset.loglike(ground_truth,Nsamples=2**i)
