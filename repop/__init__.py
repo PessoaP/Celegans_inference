@@ -32,7 +32,9 @@ def counts_loglike(k, n, phi):
     Computes the log likelihood for binomial counts given a dilution factor phi.
     """
     lp_bin = binomial_loglike(k, n, 1. / phi)
-    return lp_bin
+    #return lp_bin
+    lp_pois = poisson_loglike(k, n/phi)
+    return torch.where((phi>200)*(n>100), lp_pois,lp_bin)
 
 def Igaussmix_loglike(n, mus, sigs, rhos):
     """

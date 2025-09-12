@@ -17,14 +17,21 @@ output_dir = os.path.join("parameter_sweep_outputs")
 os.makedirs(output_dir, exist_ok=True)
 
 # === Load synthetic dataset ===
-dataset = load_and_clean_real_data(real_data_path)
+#dataset = load_and_clean_real_data(real_data_path)
+df = load_and_clean_real_data(real_data_path)
+dataset = TimeSeriesInferenceDataset(
+    ts = df['Day']*24,
+    counts=df['Counts'],
+    dils = df['Dilution'])
 
 # === Define base parameter set ===
 base_params = torch.tensor([0.05, 0.2, 1e5, 0.1])  # ground truth used to generate synthetic dataset
+base_params = torch.tensor([0.05, 0.25, 1e5, 0.1])
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 base_params = base_params.to(device)
 
 param_names = ["alpha", "mu", "capacity", "d"]
-n_points = 30  # how many points to evaluate the log-likelihood at for each parameter
+n_points = 11  # how many points to evaluate the log-likelihood at for each parameter
 span = 2.0   # sweep from 1/2x to 2x the unfixed parameter value
 
 # === Sweep function ===
@@ -47,9 +54,10 @@ def profile_likelihood_scan(dataset, base_params, param_names, n_points=20, span
         for val in scan_range:
             test_params = base_params.clone()
             test_params[i] = val
-            ll = dataset.loglike(test_params).item()
+            ll = dataset.loglike(test_params,Nsamples=2**20).item()
             scan_vals.append(val.item())
             loglikes.append(ll)
+            print(f"Param {name}: {val:.4e}, Log-likelihood: {ll:.4e}")
 
         results[name] = (scan_vals, loglikes)
 

@@ -66,38 +66,23 @@ class TimeSeriesInferenceDataset():
         Returns:
             Either a list of tensors (one per t) or a single concatenated tensor.
         """
-        list_lpkdil_ns = []
-
-        for t in range(len(self.times)):
-            mask = (self.T_index == t).reshape(-1)  # Always shape (ndatapoints,)
-            lpk = self.lpkdil_n[mask]
-
-            n_indices = ns[t]#.to(self.device)
-
-            # Fill with -inf initially
-            lpk_condensed = torch.full(
-                (lpk.size(0), len(n_indices)),
-                float('-inf'),
-                dtype=lpk.dtype,
-                device=self.device
-            )
-
-            valid_mask = n_indices < self.Nmax
-            valid_n = n_indices[valid_mask]
-            valid_n = valid_n.reshape(-1)
-
-            if valid_n.numel() > 0:
-                lpk_condensed[:, valid_mask] = lpk[:, valid_n]
-
+        dataset = self  # for clarity
+        lpkdil_list = []
+        for index in range(len(dataset.times)):
+            mask = (dataset.T_index == index).reshape(-1)
+            lpkdil_n = dataset.lpkdil_n[mask]
+            n_ind = ns[index]
+            N_samples = len(n_ind)
+            lpkdil_ns = lpkdil_n[:,n_ind[n_ind<lpkdil_n.shape[-1]]]
             if reduce:
-                lpk_condensed = torch.logsumexp(lpk_condensed, dim=1) - torch.log(torch.tensor(float(len(n_indices)), device=self.device))
-
-            list_lpkdil_ns.append(lpk_condensed)
-
-        if reduce and concat:
-            return torch.cat(list_lpkdil_ns, dim=0)
-
-        return list_lpkdil_ns
+                lpkdil_theta = torch.logsumexp(lpkdil_ns,axis=1) - torch.log(torch.tensor(N_samples))
+                lpkdil_list.append(lpkdil_theta)
+            else:
+                lpkdil_list.append(lpkdil_ns)
+        if concat:
+            return torch.cat(lpkdil_list, dim=0)
+        else:   
+            return lpkdil_list
 
     def loglike(self, value, Nsamples=2**15):
         """
@@ -113,7 +98,7 @@ class TimeSeriesInferenceDataset():
         ns = simulate_for_likelihood(value, self.times, Nsamples)
         self.last_simulated_ns = ns  # so we can save the summary statistics of the trajectories later
         log_probs = self.lpkdil_ns(ns, reduce=True, concat=True)
-        return torch.sum(log_probs, dim=0)
+        return torch.sum(log_probs)
 
     def ode_initialization(self, init=None):
         """
