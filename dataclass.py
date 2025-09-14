@@ -20,19 +20,17 @@ class TimeSeriesInferenceDataset():
                  device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
         self.device = device
         
-        # Always process these first on CPU
-        cpu = torch.device('cpu')
-        def to_cpu_tensor(arr):
+        def to_device_tensor(arr):
             if isinstance(arr, torch.Tensor):
-                return arr.reshape(-1, 1).clone().detach().to(cpu)
-            return torch.tensor(arr, device=cpu).reshape(-1, 1)
+                return arr.reshape(-1, 1).clone().detach().to(device)
+            return torch.tensor(arr, device=device).reshape(-1, 1)
 
-        self.counts = to_cpu_tensor(counts)
-        self.dils   = to_cpu_tensor(dils)
-        self.Ts     = to_cpu_tensor(ts)
+        self.counts = to_device_tensor(counts)
+        self.dils   = to_device_tensor(dils)
+        self.Ts     = to_device_tensor(ts)
 
         self.Nmax = int(2 * (self.counts * self.dils).max().item() + 1)
-        self.n = torch.arange(self.Nmax, device=cpu)
+        self.n = torch.arange(self.Nmax, device=device)
 
         self.ndatapoints = self.counts.size(0)
         self.cutoff = cutoff
@@ -72,10 +70,10 @@ class TimeSeriesInferenceDataset():
             mask = (dataset.T_index == index).reshape(-1)
             lpkdil_n = dataset.lpkdil_n[mask]
             n_ind = ns[index]
-            N_samples = len(n_ind)
+            log_N_samples = torch.log(torch.tensor(len(n_ind)))
             lpkdil_ns = lpkdil_n[:,n_ind[n_ind<lpkdil_n.shape[-1]]]
             if reduce:
-                lpkdil_theta = torch.logsumexp(lpkdil_ns,axis=1) - torch.log(torch.tensor(N_samples))
+                lpkdil_theta = torch.logsumexp(lpkdil_ns,axis=1) - log_N_samples
                 lpkdil_list.append(lpkdil_theta)
             else:
                 lpkdil_list.append(lpkdil_ns)

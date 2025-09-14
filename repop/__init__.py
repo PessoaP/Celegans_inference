@@ -13,7 +13,27 @@ l10 = log(10)
 
 # Define lambda functions for common probability calculations.
 # log_comb computes the log of the binomial coefficient.
-log_comb = lambda n, k: torch.lgamma(n + 1) - torch.lgamma(k + 1) - torch.lgamma(n - k + 1)
+def log_comb(n_row, k_col):
+    """
+    Computes sum_{j=0}^{k-1} log(n - j) - log(j!) for all (k, n).
+    Safe masking avoids log of non-positive when k > n; those pairs -> -inf.
+    """
+        
+    j = torch.arange(k_col.max()+1, device=n_row.device)
+    nmj = n_row - j[:-1].reshape(-1, 1)
+
+    # log(n - j), masked
+    terms_all = torch.where(nmj > 0, torch.log(nmj), torch.tensor(-float('inf'), device=n_row.device))
+
+    terms_cumsum = torch.cumsum(terms_all, dim=0)     # (len(j), len(n_row))
+    j_cumsum     = torch.cumsum(torch.log(j[1:]), dim=0).reshape(-1, 1)  # logs of 1..k
+
+    out = torch.vstack((torch.zeros_like(n_row),(terms_cumsum-j_cumsum)))
+    return out[k_col.reshape(-1)]
+
+
+
+
 # binomial_loglike computes the log likelihood for a binomial outcome.
 binomial_loglike = lambda k, n, p: log_comb(n, k) + k * torch.log(p) + (n - k) * torch.log(1 - p)
 # gaussian_loglike computes the log likelihood of a Gaussian given data x, mean mu, and std dev sig.
@@ -32,9 +52,7 @@ def counts_loglike(k, n, phi):
     Computes the log likelihood for binomial counts given a dilution factor phi.
     """
     lp_bin = binomial_loglike(k, n, 1. / phi)
-    #return lp_bin
-    lp_pois = poisson_loglike(k, n/phi)
-    return torch.where((phi>200)*(n>100), lp_pois,lp_bin)
+    return lp_bin
 
 def Igaussmix_loglike(n, mus, sigs, rhos):
     """
