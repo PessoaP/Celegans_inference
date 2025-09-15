@@ -12,16 +12,17 @@ lsqrt2pi = (1 / 2) * log(2 * pi)
 l10 = log(10)
 
 # Define lambda functions for common probability calculations.
+# log_comb computes the log of the binomial coefficient.
 def log_comb(n_row, k_col):
     """
-    Computes sum_{j=0}^{k-1} log(n - j) - log(j) for all (k, n).
+    Computes log binomial coefficients log(comb(n, k)) for all (k, n).
+    Using the identity: log C(n, k) = sum_{j=0}^{k-1} log(n - j) - sum_{m=1}^k log(m)
     Safe masking avoids log of non-positive when k > n; those pairs -> -inf.
     """
         
     j = torch.arange(k_col.max()+1, device=n_row.device)
     nmj = n_row - j[:-1].reshape(-1, 1)
 
-    # log(n - j), masked
     terms_all = torch.where(nmj > 0, torch.log(nmj), torch.tensor(-float('inf'), device=n_row.device))
 
     terms_cumsum = torch.cumsum(terms_all, dim=0)     # (len(j), len(n_row))
@@ -29,7 +30,7 @@ def log_comb(n_row, k_col):
 
     out = torch.vstack((torch.zeros_like(n_row),(terms_cumsum-j_cumsum)))
     return (out[k_col.reshape(-1)]).contiguous()
-        
+
 # binomial_loglike computes the log likelihood for a binomial outcome.
 binomial_loglike = lambda k, n, p: log_comb(n, k) + k * torch.log(p) + (n - k) * torch.log(1 - p)
 # gaussian_loglike computes the log likelihood of a Gaussian given data x, mean mu, and std dev sig.
