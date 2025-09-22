@@ -58,13 +58,15 @@ full_dataset = TimeSeriesInferenceDataset(ts, counts, dils, cutoff=300)
 
 # === ODE Initialization for prior/initial guess ===
 prior, initial_guess = mcmc.make_prior_from_initial_guess(full_dataset, frac_error=0.5, device=device)
-infer_idx = [0,1,2,3]  # Example: infer everything 
+infer_idx = None # all parameters will be auto-inferred if there's no specified subset
+# infer_idx = [0]  # Example: infer only colonization 
 ground_truth = torch.tensor([1/20, 1/4, 1e5, 0.1], device=device) 
 
-# Overwrite non-inferred params with ground truth
-for i in range(len(initial_guess)):
-    if i not in infer_idx:
-        initial_guess[i] = ground_truth[i]
+# Overwrite non-inferred params with ground truth if they exist
+if infer_idx is not None:
+    for i in range(len(initial_guess)):
+        if i not in infer_idx:
+            initial_guess[i] = ground_truth[i]
 
 init_L = 1e-2 * torch.diag(torch.tensor((1, 1, 1, 5), device=device))
         
@@ -76,9 +78,9 @@ state = mcmc.SamplerState(L=init_L)
 
 
 # === MCMC Settings ===
-n_burn1 = 2000
-n_burn2 = 0
-n_mcmc  = 8000
+n_burn1 = 0
+n_burn2 = 2000
+n_mcmc  = 10000
 sample_window = 200
 total_steps = n_burn1 + n_burn2 + n_mcmc
 
@@ -126,7 +128,7 @@ def plot_intermediate_histograms(samples, step, output_dir, n_burn1, n_burn2):
         phase = "posterior"
 
     fig, ax = plt.subplots(1, 4, figsize=(16, 4))
-    titles = ['Colonization rate (/h)', 'Replication rate (/h)', 'Capacity', 'Expulsion rate (/h)']
+    xlabels = ['Colonization rate (/h)', 'Replication rate (/h)', 'Capacity', 'Expulsion rate (/h)']
     for i in range(4):
         data = samples_to_plot[:, i]
         unique_vals = np.unique(data)
@@ -138,7 +140,11 @@ def plot_intermediate_histograms(samples, step, output_dir, n_burn1, n_burn2):
             ax[i].set_xlim([unique_vals[0] - 0.5, unique_vals[0] + 0.5])
             ax[i].set_ylim(bottom=0)
             ax[i].text(unique_vals[0], 0.5, 'All samples identical', ha='center', va='center', color='red')
-
+        ax[i].set_xlabel(xlabels[i])
+        
+        # Overlay ground truth as dotted vertical line
+        ax[i].axvline(float(ground_truth[i]), color='k', linestyle=':', linewidth=2, label='Ground truth')
+    
     fig.suptitle(f"{phase.capitalize()} Histograms up to Step {step}", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
 
@@ -220,21 +226,35 @@ try:
         u_history = mcmc_u[max(actual_n_burn1, s - sample_window):s] if adapt else None
 
         any_moved = False
+        
+        dim = initial_guess.shape[0]
+        all_idx = list(range(dim)) if infer_idx is None else infer_idx
 
-        for i in infer_idx:
+        # Per outer step:
+        if infer_idx is None:
+            # single full update
             u_new, lp_u_new, state, accepted = mcmc.next_MCMC_sample_u(
                 logposterior_u, u, lp_u, state,
                 greedy=greedy, adapt=adapt, u_history=u_history,
-                output_dir=output_dir, update_idx=[i]
+                output_dir=output_dir, update_idx=None
             )
-            
             if accepted and not torch.allclose(u_new, u, atol=1e-10):
                 any_moved = True
-                u = u_new
-                lp_u = lp_u_new
-            if not torch.isfinite(lp_u) or not torch.all(torch.isfinite(u)):
-                log(f"Invalid u-sample at step {s+1}, skipping or stopping.")
-                break
+                u, lp_u = u_new, lp_u_new
+        else:
+         # coordinate/block updates
+            for i in infer_idx:
+                u_new, lp_u_new, state, accepted = mcmc.next_MCMC_sample_u(
+                    logposterior_u, u, lp_u, state,
+                    greedy=greedy, adapt=adapt, u_history=u_history,
+                    output_dir=output_dir, update_idx=[i]
+                )
+                if accepted and not torch.allclose(u_new, u, atol=1e-10):
+                    any_moved = True
+                    u, lp_u = u_new, lp_u_new
+                if not torch.isfinite(lp_u) or not torch.all(torch.isfinite(u)):
+                    log(f"Invalid u-sample at step {s+1}, skipping or stopping.")
+                    break
 
         # Convert current u to θ once per outer step for storage / summaries
         params = mcmc.to_theta(u)
@@ -310,8 +330,8 @@ df_summary.describe().to_csv(os.path.join(output_dir, 'posterior_summary.csv'))
 
 # === Plot Outputs ===
 fig, ax = plt.subplots(1, 4, figsize=(16, 4))
-titles = ['Colonization rate (/h)', 'Replication rate (/h)', 'Capacity', 'Expulsion rate (/h)']
-# Assuming ground_truth is a tensor or array of length 4 
+xlabels = ['Colonization', 'Replication', 'Capacity', 'Expulsion']
+
 for i in range(4):
     data = posterior_samples[:, i]
     unique_vals = np.unique(data)
@@ -322,18 +342,23 @@ for i in range(4):
         ax[i].bar(unique_vals[0], height=1.0, width=0.1, alpha=0.7)
         ax[i].set_xlim([unique_vals[0] - 0.5, unique_vals[0] + 0.5])
         ax[i].set_ylim(bottom=0)
-        ax[i].text(unique_vals[0], 0.5, 'All samples identical', ha='center', va='center', color='red')
-    # Overlay ground truth as a dotted vertical line
+        ax[i].text(unique_vals[0], 0.5, 'All samples identical',
+                   ha='center', va='center', color='red')
+
+    # Overlay ground truth as dotted vertical line
     ax[i].axvline(float(ground_truth[i]), color='k', linestyle=':', linewidth=2, label='Ground truth')
-    ax[i].set_xlabel(titles[i])
-    ax[i].set_ylabel('Density')
-    ax[i].ticklabel_format(style='sci', axis='both', scilimits=(2, 3))
-    # Only show legend for first subplot to avoid clutter
+
+    ax[i].set_xlabel(xlabels[i])   # short names on x-axis
+    ax[i].ticklabel_format(style='sci', axis='x', scilimits=(2, 3))
+
     if i == 0:
+        ax[i].set_ylabel('Density')     # one shared y-axis label
         ax[i].legend(loc='best')
+
 fig.tight_layout()
 plt.savefig(os.path.join(output_dir, 'histograms.png'), dpi=600)
 plt.savefig(os.path.join(output_dir, 'histograms.svg'), format='svg')
+plt.close(fig)
 
 lps = np.array(mcmc_lps)
 burn_cutoff = actual_n_burn1 + n_burn2
