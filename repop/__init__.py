@@ -18,18 +18,27 @@ def log_comb(n_row, k_col):
     Computes log binomial coefficients log(comb(n, k)) for all (k, n).
     Using the identity: log C(n, k) = sum_{j=0}^{k-1} log(n - j) - sum_{m=1}^k log(m)
     Safe masking avoids log of non-positive when k > n; those pairs -> -inf.
+    Robust to integer inputs.
     """
-        
-    j = torch.arange(k_col.max()+1, device=n_row.device)
+    # Force float math for logs
+    n_row = n_row.to(torch.float64)
+    k_idx = k_col.reshape(-1).to(torch.long)  # index must be long
+
+    # Build j in float so torch.log works
+    j = torch.arange(int(k_idx.max().item()) + 1, device=n_row.device, dtype=torch.float64)
+
     nmj = n_row - j[:-1].reshape(-1, 1)
 
-    terms_all = torch.where(nmj > 0, torch.log(nmj), torch.tensor(-float('inf'), device=n_row.device))
+    neg_inf = torch.tensor(float('-inf'), device=n_row.device, dtype=torch.float64)
+    terms_all = torch.where(nmj > 0, torch.log(nmj), neg_inf)
 
-    terms_cumsum = torch.cumsum(terms_all, dim=0)     # (len(j), len(n_row))
-    j_cumsum     = torch.cumsum(torch.log(j[1:]), dim=0).reshape(-1, 1)  # logs of 1..k
+    terms_cumsum = torch.cumsum(terms_all, dim=0)                   # (len(j)-1, len(n_row))
+    j_cumsum     = torch.cumsum(torch.log(j[1:]), dim=0).reshape(-1, 1)
 
-    out = torch.vstack((torch.zeros_like(n_row),(terms_cumsum-j_cumsum)))
-    return (out[k_col.reshape(-1)]).contiguous()
+    out = torch.vstack((torch.zeros_like(n_row, dtype=torch.float64),
+                        (terms_cumsum - j_cumsum)))
+    return out[k_idx].contiguous()
+
 
 # binomial_loglike computes the log likelihood for a binomial outcome.
 binomial_loglike = lambda k, n, p: log_comb(n, k) + k * torch.log(p) + (n - k) * torch.log(1 - p)
@@ -127,8 +136,8 @@ def dils_switch(dils, N, cutoff):
       logZdils: per-example log partition function (shape [batch])
       pdils: per-example cumulative correction term (shape [batch])
     """
-    n = torch.arange(N).to(dils.device)  # shape: [N]
-    k = torch.arange(cutoff + 1).reshape(-1, 1).to(dils.device)  # shape: [cutoff+1, 1]
+    n = torch.arange(N, device=dils.device, dtype=torch.float64)                 # [N] → float for logs
+    k = torch.arange(cutoff + 1, device=dils.device, dtype=torch.long).reshape(-1, 1)  # [K,1] → long for indexing. shape: [cutoff+1, 1]
 
     # Here k is treated as the row (different values), and n as the column (broadcasting over trials)
     # counts_loglike(k, n, d) will broadcast over k and n as 2D arrays:
@@ -137,7 +146,7 @@ def dils_switch(dils, N, cutoff):
     dils_unique, inverse = torch.unique(dils, return_inverse=True, sorted=True)
     dils_num = dils_unique.size(0)
     logZdils, pdils = [], []
-    lp_antes = torch.zeros_like(n).float()
+    lp_antes = torch.zeros_like(n)
 
     for i in range(dils_num):
         d = dils_unique[i]
@@ -182,9 +191,9 @@ class dataset():
         # Use GPU if available.
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # Convert counts and dilutions to column tensors.
-        self.counts = torch.tensor(counts.reshape(-1, 1))
-        self.dils = torch.tensor(dils.reshape(-1, 1))
-
+        self.counts = torch.tensor(counts.reshape(-1, 1), dtype=torch.long,   device=self.device)
+        self.dils   = torch.tensor(dils.reshape(-1, 1),   dtype=torch.float64, device=self.device)
+        
         self.ndatapoints = self.counts.size(0)
         self.cutoff = cutoff
 
@@ -192,11 +201,8 @@ class dataset():
         self.ML = (counts * dils).clip(min=1).reshape(-1, 1)
         self.Nmin = 1
         self.Nmax = 2 * self.ML.max() + 1
-        self.width = torch.tensor(self.Nmax, device=self.device)
-        self.n = torch.arange(self.Nmax)
-
-        #self.lpkdil_n = get_lpkdil_n(self.counts,self.dils,self.n,cutoff,self.Nmax).to(self.device)
-        self.n = self.n.to(self.device)        
+        self.width = torch.tensor(self.Nmax, device=self.device, dtype=torch.float64)
+        self.n = torch.arange(self.Nmax, device=self.device, dtype=torch.float64)
 
         # Set the weak limit based on the number of datapoints.
         self.weaklimit = min(weak_limit, int(sqrt(self.counts.numel())))
@@ -350,11 +356,12 @@ class dataset():
         # For each unique dilution value (sorted in descending order), compute the histogram of counts.
         for dil in dils[argsort(-dils)]:
             # Try to use the cutoff if available.
-            g_dil = torch.zeros(self.counts.max() + 1, dtype=int)
+            g_dil = torch.zeros(int(self.counts.max().item()) + 1, dtype=self.counts.dtype, device=self.device)
             try:
-                g_dil = torch.zeros(self.cutoff + 1, dtype=int)
-            except:
+                g_dil = torch.zeros(int(self.cutoff) + 1, dtype=self.counts.dtype, device=self.device)
+            except Exception:
                 pass
+
             k, fk = torch.unique(self.counts[self.dils == dil], return_counts=True)
             g_dil[k] += fk
             g.append(g_dil.numpy())
