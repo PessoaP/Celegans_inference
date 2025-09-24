@@ -50,14 +50,14 @@ log(f"Output dir: {output_dir}")
 df = load_and_clean_real_data(real_data_path, cutoff=300)
 
 # Load on CPU; dataset class moves to GPU after pre-processing
-ts = torch.as_tensor(df["Day"].values * 24, dtype=torch.float64)   # hours
-counts = torch.as_tensor(df["Counts"].values, dtype=torch.long)    # MUST be integer for indexing
-dils = torch.as_tensor(df["Dilution"].values, dtype=torch.float64) # dilution factors
+ts = torch.tensor(df["Day"].values * 24)     
+counts = torch.tensor(df["Counts"].values)
+dils = torch.tensor(df["Dilution"].values)
 full_dataset = TimeSeriesInferenceDataset(ts, counts, dils, cutoff=300)
 
 
 # === ODE Initialization for prior/initial guess ===
-prior, initial_guess = mcmc.make_prior_from_initial_guess(full_dataset, frac_error=[0.8, 0.8, 1.5, 0.8], device=device) # loosen prior parameter to avoid sticking
+prior, initial_guess = mcmc.make_prior_from_initial_guess(full_dataset, frac_error=0.5, device=device)
 infer_idx = None # all parameters will be auto-inferred if there's no specified subset
 # infer_idx = [0]  # Example: infer only colonization 
 ground_truth = torch.tensor([1/20, 1/4, 1e5, 0.1], device=device) 
@@ -142,8 +142,8 @@ def plot_intermediate_histograms(samples, step, output_dir, n_burn1, n_burn2):
             ax[i].text(unique_vals[0], 0.5, 'All samples identical', ha='center', va='center', color='red')
         ax[i].set_xlabel(xlabels[i])
         
-        # Overlay initial ODE guess as dotted vertical line
-        ax[i].axvline(float(initial_guess[i]), color='k', linestyle=':', linewidth=2, label='ODE initial guess')
+        # Overlay ground truth as dotted vertical line
+        ax[i].axvline(float(ground_truth[i]), color='k', linestyle=':', linewidth=2, label='Ground truth')
     
     fig.suptitle(f"{phase.capitalize()} Histograms up to Step {step}", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
@@ -345,13 +345,8 @@ for i in range(4):
         ax[i].text(unique_vals[0], 0.5, 'All samples identical',
                    ha='center', va='center', color='red')
 
-    # Overlay ODE initial guess as dotted vertical line
-    ax[i].axvline(float(initial_guess[i]), color='k', linestyle=':', linewidth=2, label='ODE initial guess')
-    
-    # Overlay posterior mean as solid vertical line
-    mean_val = np.mean(data)
-    ax[i].axvline(mean_val, color='r', linestyle='-', linewidth=2,
-                  label='Posterior mean')
+    # Overlay ground truth as dotted vertical line
+    ax[i].axvline(float(ground_truth[i]), color='k', linestyle=':', linewidth=2, label='Ground truth')
 
     ax[i].set_xlabel(xlabels[i])   # short names on x-axis
     ax[i].ticklabel_format(style='sci', axis='x', scilimits=(2, 3))
