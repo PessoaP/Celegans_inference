@@ -5,7 +5,7 @@
 #SBATCH --mem=264G
 #SBATCH -t 0-96:00:00
 
-#SBATCH -p general                      
+#SBATCH -p public                      
 #SBATCH -q public
 #SBATCH -G a100:1
 
@@ -31,7 +31,7 @@ cd "$SCRATCH_RUN_DIR"
 export PYTHONPATH=$PWD:$PYTHONPATH
 
 # === Use Selected Dataset ===
-DATA_FILE="real_data/Exp_1_Ecoli_population.csv"
+DATA_FILE="real_data/Exp_4_Regular_Feed_pH7.3_data.csv"
 
 # === Run Script ===
 python inference_realdata.py "$DATA_FILE"

@@ -68,7 +68,8 @@ if infer_idx is not None:
         if i not in infer_idx:
             initial_guess[i] = ground_truth[i]
 
-init_L = 1e-2 * torch.diag(torch.tensor((1, 1, 1, 5), device=device))
+# Initialize L
+init_L = 1e-3 * torch.diag(torch.tensor((1, 1, 1, 5), device=device))
         
 # === u-space target and initial state ===
 logposterior_u = mcmc.make_logposterior_u(full_dataset, prior) # the posterior in u = log(θ) space
@@ -78,10 +79,10 @@ state = mcmc.SamplerState(L=init_L)
 
 
 # === MCMC Settings ===
-n_burn1 = 0
-n_burn2 = 2000
+n_burn1 = 1000
+n_burn2 = 4000
 n_mcmc  = 10000
-sample_window = 200
+sample_window = 500
 total_steps = n_burn1 + n_burn2 + n_mcmc
 
 dim = initial_guess.shape[0]
