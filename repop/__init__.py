@@ -6,6 +6,17 @@ from sklearn.mixture import GaussianMixture  # For the naive fitting of a Gaussi
 from matplotlib import pyplot as plt
 from matplotlib.ticker import ScalarFormatter, AutoLocator, FuncFormatter
 import warnings
+import math
+import numpy as np
+from scipy.special import gammaln
+
+def sp_lgamma(t: torch.Tensor) -> torch.Tensor:
+    """
+    SciPy-backed replacement for torch.lgamma. (lgamma has issues)
+    Detaches to CPU for gammaln, then returns a tensor on the same device/dtype.
+    """
+    y = gammaln(t.detach().cpu().numpy())
+    return torch.from_numpy(y).to(device=t.device, dtype=t.dtype)
 
 # Precompute constant values used in the Gaussian likelihood function.
 lsqrt2pi = (1 / 2) * log(2 * pi)
@@ -13,39 +24,13 @@ l10 = log(10)
 
 # Define lambda functions for common probability calculations.
 # log_comb computes the log of the binomial coefficient.
-def log_comb(n_row, k_col):
-    """
-    Computes log binomial coefficients log(comb(n, k)) for all (k, n).
-    Using the identity: log C(n, k) = sum_{j=0}^{k-1} log(n - j) - sum_{m=1}^k log(m)
-    Safe masking avoids log of non-positive when k > n; those pairs -> -inf.
-    Robust to integer inputs.
-    """
-    # Force float math for logs
-    n_row = n_row.to(torch.float64)
-    k_idx = k_col.reshape(-1).to(torch.long)  # index must be long
-
-    # Build j in float so torch.log works
-    j = torch.arange(int(k_idx.max().item()) + 1, device=n_row.device, dtype=torch.float64)
-
-    nmj = n_row - j[:-1].reshape(-1, 1)
-
-    neg_inf = torch.tensor(float('-inf'), device=n_row.device, dtype=torch.float64)
-    terms_all = torch.where(nmj > 0, torch.log(nmj), neg_inf)
-
-    terms_cumsum = torch.cumsum(terms_all, dim=0)                   # (len(j)-1, len(n_row))
-    j_cumsum     = torch.cumsum(torch.log(j[1:]), dim=0).reshape(-1, 1)
-
-    out = torch.vstack((torch.zeros_like(n_row, dtype=torch.float64),
-                        (terms_cumsum - j_cumsum)))
-    return out[k_idx].contiguous()
-
-
+log_comb = lambda n, k: sp_lgamma(n + 1) - sp_lgamma(k + 1) - sp_lgamma(n - k + 1)
 # binomial_loglike computes the log likelihood for a binomial outcome.
 binomial_loglike = lambda k, n, p: log_comb(n, k) + k * torch.log(p) + (n - k) * torch.log(1 - p)
 # gaussian_loglike computes the log likelihood of a Gaussian given data x, mean mu, and std dev sig.
 gaussian_loglike = lambda x, mu, sig: - torch.pow(((x - mu) / sig), 2) / 2 - torch.log(sig) - lsqrt2pi
 # poisson_loglike computes the log likelihood for a Poisson outcome.
-poisson_loglike = lambda k, rate: k * torch.log(rate) - rate - torch.lgamma(k + 1)
+poisson_loglike = lambda k, rate: k * torch.log(rate) - rate - sp_lgamma(k + 1)
 
 # Set a weak limit constant, used later in parameter estimation.
 weak_limit = 25
@@ -136,8 +121,8 @@ def dils_switch(dils, N, cutoff):
       logZdils: per-example log partition function (shape [batch])
       pdils: per-example cumulative correction term (shape [batch])
     """
-    n = torch.arange(N, device=dils.device, dtype=torch.float64)                 # [N] → float for logs
-    k = torch.arange(cutoff + 1, device=dils.device, dtype=torch.long).reshape(-1, 1)  # [K,1] → long for indexing. shape: [cutoff+1, 1]
+    n = torch.arange(N).to(dils.device)  # shape: [N]
+    k = torch.arange(cutoff + 1).reshape(-1, 1).to(dils.device)  # shape: [cutoff+1, 1]
 
     # Here k is treated as the row (different values), and n as the column (broadcasting over trials)
     # counts_loglike(k, n, d) will broadcast over k and n as 2D arrays:
@@ -146,7 +131,7 @@ def dils_switch(dils, N, cutoff):
     dils_unique, inverse = torch.unique(dils, return_inverse=True, sorted=True)
     dils_num = dils_unique.size(0)
     logZdils, pdils = [], []
-    lp_antes = torch.zeros_like(n)
+    lp_antes = torch.zeros_like(n).float()
 
     for i in range(dils_num):
         d = dils_unique[i]
@@ -191,9 +176,9 @@ class dataset():
         # Use GPU if available.
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # Convert counts and dilutions to column tensors.
-        self.counts = torch.tensor(counts.reshape(-1, 1), dtype=torch.long,   device=self.device)
-        self.dils   = torch.tensor(dils.reshape(-1, 1),   dtype=torch.float64, device=self.device)
-        
+        self.counts = torch.tensor(counts.reshape(-1, 1))
+        self.dils = torch.tensor(dils.reshape(-1, 1))
+
         self.ndatapoints = self.counts.size(0)
         self.cutoff = cutoff
 
@@ -201,8 +186,11 @@ class dataset():
         self.ML = (counts * dils).clip(min=1).reshape(-1, 1)
         self.Nmin = 1
         self.Nmax = 2 * self.ML.max() + 1
-        self.width = torch.tensor(self.Nmax, device=self.device, dtype=torch.float64)
-        self.n = torch.arange(self.Nmax, device=self.device, dtype=torch.float64)
+        self.width = torch.tensor(self.Nmax, device=self.device)
+        self.n = torch.arange(self.Nmax)
+        
+        #self.lpkdil_n = get_lpkdil_n(self.counts,self.dils,self.n,cutoff,self.Nmax).to(self.device)
+        self.n = self.n.to(self.device)        
 
         # Set the weak limit based on the number of datapoints.
         self.weaklimit = min(weak_limit, int(sqrt(self.counts.numel())))
@@ -246,7 +234,7 @@ class dataset():
         indices = argsort(-prov_rhos)
         prov_mus, prov_sigs, prov_rhos = prov_mus[indices], prov_sigs[indices], prov_rhos[indices]
 
-        self.ML_estimated = (torch.tensor(prov_mus), torch.tensor(prov_sigs), torch.tensor(prov_rhos))
+        self.ML_estimated = (torch.tensor(prov_mus).clip(self.Nmin+.01), torch.tensor(prov_sigs), torch.tensor(prov_rhos))  # make sure the Gaussian mixture model is not negative
         return self.ML_estimated
 
     def evaluate(self, components=weak_limit, tol=1e-5, lr=0.01, observe=False, dir_factor=0.9, component_cut=1/50):
@@ -356,12 +344,11 @@ class dataset():
         # For each unique dilution value (sorted in descending order), compute the histogram of counts.
         for dil in dils[argsort(-dils)]:
             # Try to use the cutoff if available.
-            g_dil = torch.zeros(int(self.counts.max().item()) + 1, dtype=self.counts.dtype, device=self.device)
+            g_dil = torch.zeros(self.counts.max() + 1, dtype=int)
             try:
-                g_dil = torch.zeros(int(self.cutoff) + 1, dtype=self.counts.dtype, device=self.device)
-            except Exception:
+                g_dil = torch.zeros(self.cutoff + 1, dtype=int)
+            except:
                 pass
-
             k, fk = torch.unique(self.counts[self.dils == dil], return_counts=True)
             g_dil[k] += fk
             g.append(g_dil.numpy())
