@@ -46,13 +46,11 @@ def get_rates(E, params):
     """
     # Ensure E and params are on same device
     E = E.to(params.device)
-    alpha, mu_E, k, d = params
-    rates = torch.stack((
-        alpha,
-        mu_E * E,
-        ((mu_E-d) / k) * E * E,
-        d * E
-    ), dim=-1)
+    alpha, mu_E, k, dell = params
+    rates = torch.stack((alpha,
+                         mu_E * E,
+                        ((mu_E-dell) / k) * E * E,
+                        dell * E), dim=-1)
     return rates
 
 
@@ -148,13 +146,13 @@ def step(params, E, t0, T, E_tol=1e3):
     dE = torch.zeros_like(E)
 
     if torch.any(use_Gillespie):
-        dt[use_Gillespie], dE[use_Gillespie] = Gillespie_step(
-            params[:, use_Gillespie], E[use_Gillespie], (T - t0)[use_Gillespie]
-        )
+        dt[use_Gillespie], dE[use_Gillespie] = Gillespie_step(params[:, use_Gillespie], 
+                                                              E[use_Gillespie], 
+                                                              (T - t0)[use_Gillespie])
     if torch.any(use_tau):
-        dt[use_tau], dE[use_tau] = tau_leap(
-            params[:, use_tau], E[use_tau], (T - t0)[use_tau]
-        )
+        dt[use_tau], dE[use_tau] = tau_leap(params[:, use_tau], 
+                                            E[use_tau], 
+                                            (T - t0)[use_tau])
 
     return t0 + dt, E + dE
 

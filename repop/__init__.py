@@ -14,14 +14,10 @@ l10 = log(10)
 # Define lambda functions for common probability calculations.
 # log_comb computes the log of the binomial coefficient.
 from scipy.special import gammaln
-
-def sp_lgamma(t: torch.Tensor) -> torch.Tensor:
-    """
-    SciPy-backed replacement for torch.lgamma. (lgamma has issues)
-    Detaches to CPU for gammaln, then returns a tensor on the same device/dtype.
-    """
+def sp_lgamma(t):
     y = gammaln(t.detach().cpu().numpy())
-    return torch.from_numpy(y).to(device=t.device, dtype=t.dtype)
+    return torch.from_numpy(y).to(device=t.device)
+
 # Define lambda functions for common probability calculations.
 # log_comb computes the log of the binomial coefficient.
 log_comb = lambda n, k: sp_lgamma(n + 1) - sp_lgamma(k + 1) - sp_lgamma(n - k + 1)

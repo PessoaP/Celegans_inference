@@ -16,19 +16,42 @@ import mcmc
 from simulator import ConstrainedLogNormalPrior
 from load_and_clean_real_data import load_and_clean_real_data
 from configure_plotting import configure_plotting
+from plot_helpers import plot_intermediate_histograms, plot_logposterior_trace
 
 # === Configuration ===
 torch.manual_seed(15)
 np.random.seed(15)
 
-# Ensure GPU reproducibility by forcing bitwise identical outputs (use for unit tests)
-#torch.backends.cudnn.deterministic = True
-#torch.backends.cudnn.benchmark = False
-#torch.use_deterministic_algorithms(True)
 
 configure_plotting()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Device selected:", device)
+
+def save_summaries(proposal_idx, params, sim_times, ns, target_days=[1, 3, 5, 7, 9]):
+    target_times = np.array(target_days) * 24
+    pop_mat = np.stack([n.cpu().numpy() for n in ns])  # shape: (n_sim_times, n_samples)
+    interp_pops = np.empty((len(target_times), pop_mat.shape[1]))  # (n_targets, n_samples)
+    for sample_idx in range(pop_mat.shape[1]):
+        interp_pops[:, sample_idx] = np.interp(target_times, sim_times, pop_mat[:, sample_idx])
+    rows = []
+    for i, t in enumerate(target_times):
+        vals = interp_pops[i, :]
+        row = {
+            'proposal_idx': proposal_idx,
+            'colonization': float(params[0].cpu()),
+            'replication': float(params[1].cpu()),
+            'capacity': float(params[2].cpu()),
+            'expulsion': float(params[3].cpu()),
+            'time': float(t),
+            'mean': float(np.mean(vals)),
+            'std': float(np.std(vals)),
+            'median': float(np.median(vals)),
+            'q25': float(np.percentile(vals, 25)),
+            'q75': float(np.percentile(vals, 75)),
+        }
+        rows.append(row)
+    df = pd.DataFrame(rows)
+    df.to_csv(summary_path, mode='a', header=False, index=False)
 
 # === Load real data path from argument ===
 real_data_path = sys.argv[1]
@@ -93,82 +116,84 @@ start_step  = 0
 
 
 # === Resume from checkpoint if exists ===
-if os.path.exists(checkpoint_path):
-    log("Resuming from previous checkpoint...")
-    ckpt = torch.load(checkpoint_path, map_location=device)
-    mcmc_params[:ckpt['step']] = ckpt['param_history']
-    mcmc_lps = ckpt['log_lps']
-    # Prefer stored u-history if present; else reconstruct from last θ
-    if 'u_history' in ckpt:
-        mcmc_u[:ckpt['step']] = ckpt['u_history']
-        u = mcmc_u[ckpt['step']-1]
-    else:
-        u = mcmc.to_u(mcmc_params[ckpt['step']-1])
-    lp_u = mcmc.make_logposterior_u(full_dataset, prior)(u)
-    state = mcmc.SamplerState(L=ckpt.get('L', init_L), iter_num=ckpt['step'])
-    state.load_state_dict(ckpt['state_dict'])
-    start_step = ckpt['step']
-    actual_n_burn1 = ckpt.get('actual_n_burn1', n_burn1)
-    log(f"Resuming from step {start_step}")
-else:
+#For now let's just always overwrite
+# if os.path.exists(checkpoint_path):
+#     log("Resuming from previous checkpoint...")
+#     ckpt = torch.load(checkpoint_path, map_location=device)
+#     mcmc_params[:ckpt['step']] = ckpt['param_history']
+#     mcmc_lps = ckpt['log_lps']
+#     # Prefer stored u-history if present; else reconstruct from last θ
+#     if 'u_history' in ckpt:
+#         mcmc_u[:ckpt['step']] = ckpt['u_history']
+#         u = mcmc_u[ckpt['step']-1]
+#     else:
+#         u = mcmc.to_u(mcmc_params[ckpt['step']-1])
+#     lp_u = mcmc.make_logposterior_u(full_dataset, prior)(u)
+#     state = mcmc.SamplerState(L=ckpt.get('L', init_L), iter_num=ckpt['step'])
+#     state.load_state_dict(ckpt['state_dict'])
+#     start_step = ckpt['step']
+#     actual_n_burn1 = ckpt.get('actual_n_burn1', n_burn1)
+#     log(f"Resuming from step {start_step}")
+# else:
+if True:
     state = mcmc.SamplerState(L=init_L)
     actual_n_burn1 = n_burn1
     log(f"ODE guess, with fixed params set to GT: {initial_guess.cpu().numpy()}")
 
 
-# === Intermediate plotting functions ===
-def plot_intermediate_histograms(samples, step, output_dir, n_burn1, n_burn2):
-    samples_np = samples.cpu().numpy()
-    burn_cutoff = n_burn1 + n_burn2
+# # === Intermediate plotting functions ===
+# def plot_intermediate_histograms(samples, step, output_dir, n_burn1, n_burn2):
+#     samples_np = samples.cpu().numpy()
+#     burn_cutoff = n_burn1 + n_burn2
 
-    if step <= burn_cutoff:
-        samples_to_plot = samples_np[:step]
-        phase = "burnin"
-    else:
-        samples_to_plot = samples_np[burn_cutoff:step]
-        phase = "posterior"
+#     if step <= burn_cutoff:
+#         samples_to_plot = samples_np[:step]
+#         phase = "burnin"
+#     else:
+#         samples_to_plot = samples_np[burn_cutoff:step]
+#         phase = "posterior"
 
-    fig, ax = plt.subplots(1, 4, figsize=(16, 4))
-    xlabels = ['Colonization rate (/h)', 'Replication rate (/h)', 'Capacity', 'Expulsion rate (/h)']
-    for i in range(4):
-        data = samples_to_plot[:, i]
-        unique_vals = np.unique(data)
-        if unique_vals.size > 1:
-            n_bins = min(30, unique_vals.size)
-            ax[i].hist(data, bins=n_bins, density=True, alpha=0.7)
-        else:
-            ax[i].bar(unique_vals[0], height=1.0, width=0.1, alpha=0.7)
-            ax[i].set_xlim([unique_vals[0] - 0.5, unique_vals[0] + 0.5])
-            ax[i].set_ylim(bottom=0)
-            ax[i].text(unique_vals[0], 0.5, 'All samples identical', ha='center', va='center', color='red')
-        ax[i].set_xlabel(xlabels[i])
+#     fig, ax = plt.subplots(1, 4, figsize=(16, 4))
+#     xlabels = ['Colonization rate (/h)', 'Replication rate (/h)', 'Capacity', 'Expulsion rate (/h)']
+#     for i in range(4):
+#         data = samples_to_plot[:, i]
+#         unique_vals = np.unique(data)
+#         if unique_vals.size > 1:
+#             n_bins = min(30, unique_vals.size)
+#             ax[i].hist(data, bins=n_bins, density=True, alpha=0.7)
+#         else:
+#             ax[i].bar(unique_vals[0], height=1.0, width=0.1, alpha=0.7)
+#             ax[i].set_xlim([unique_vals[0] - 0.5, unique_vals[0] + 0.5])
+#             ax[i].set_ylim(bottom=0)
+#             ax[i].text(unique_vals[0], 0.5, 'All samples identical', ha='center', va='center', color='red')
+#         ax[i].set_xlabel(xlabels[i])
         
-        # Overlay ground truth as dotted vertical line
-        ax[i].axvline(float(ground_truth[i]), color='k', linestyle=':', linewidth=2, label='Ground truth')
+#         # Overlay ground truth as dotted vertical line
+#         ax[i].axvline(float(ground_truth[i]), color='k', linestyle=':', linewidth=2, label='Ground truth')
     
-    fig.suptitle(f"{phase.capitalize()} Histograms up to Step {step}", fontsize=14)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+#     fig.suptitle(f"{phase.capitalize()} Histograms up to Step {step}", fontsize=14)
+#     fig.tight_layout(rect=[0, 0, 1, 0.95])
 
-    png_path = os.path.join(output_dir, f"hist_step{step:04d}_{phase}.png")
-    svg_path = os.path.join(output_dir, f"hist_step{step:04d}_{phase}.svg")
-    fig.savefig(png_path, dpi=300)
-    fig.savefig(svg_path, format='svg')
-    plt.close(fig)
+#     png_path = os.path.join(output_dir, f"hist_step{step:04d}_{phase}.png")
+#     svg_path = os.path.join(output_dir, f"hist_step{step:04d}_{phase}.svg")
+#     fig.savefig(png_path, dpi=300)
+#     fig.savefig(svg_path, format='svg')
+#     plt.close(fig)
 
-def plot_logposterior_trace(mcmc_lps, step, output_dir, actual_n_burn1, n_burn2):
-    lps = np.array(mcmc_lps)
-    burn_cutoff = actual_n_burn1 + n_burn2
-    fig, ax = plt.subplots(figsize=(8, 3))
-    ax.plot(np.arange(len(lps)), lps, label='Log-posterior')
-    ax.axvline(burn_cutoff, color='red', linestyle='--', label='End of burn-in')
-    ax.set_xlabel('Step')
-    ax.set_ylabel('Log posterior')
-    ax.set_title(f'Log-posterior trace up to step {step}')
-    ax.legend()
-    fig.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'logposterior_step{step:04d}.png'), dpi=300)
-    plt.savefig(os.path.join(output_dir, f'logposterior_step{step:04d}.svg'), format='svg')
-    plt.close(fig)
+# def plot_logposterior_trace(mcmc_lps, step, output_dir, actual_n_burn1, n_burn2):
+#     lps = np.array(mcmc_lps)
+#     burn_cutoff = actual_n_burn1 + n_burn2
+#     fig, ax = plt.subplots(figsize=(8, 3))
+#     ax.plot(np.arange(len(lps)), lps, label='Log-posterior')
+#     ax.axvline(burn_cutoff, color='red', linestyle='--', label='End of burn-in')
+#     ax.set_xlabel('Step')
+#     ax.set_ylabel('Log posterior')
+#     ax.set_title(f'Log-posterior trace up to step {step}')
+#     ax.legend()
+#     fig.tight_layout()
+#     plt.savefig(os.path.join(output_dir, f'logposterior_step{step:04d}.png'), dpi=300)
+#     plt.savefig(os.path.join(output_dir, f'logposterior_step{step:04d}.svg'), format='svg')
+#     plt.close(fig)
 
 
 # === Main MCMC Loop ===
@@ -184,33 +209,6 @@ summary_path = os.path.join(output_dir, 'all_proposals_summaries.csv')
 if not os.path.exists(summary_path):
     pd.DataFrame(columns=['proposal_idx','colonization','replication','capacity','expulsion',
                           'time','mean','std','median','q25','q75']).to_csv(summary_path, index=False)
-
-def save_summaries(proposal_idx, params, sim_times, ns, target_days=[1, 3, 5, 7, 9]):
-    target_times = np.array(target_days) * 24
-    pop_mat = np.stack([n.cpu().numpy() for n in ns])  # shape: (n_sim_times, n_samples)
-    interp_pops = np.empty((len(target_times), pop_mat.shape[1]))  # (n_targets, n_samples)
-    for sample_idx in range(pop_mat.shape[1]):
-        interp_pops[:, sample_idx] = np.interp(target_times, sim_times, pop_mat[:, sample_idx])
-    rows = []
-    for i, t in enumerate(target_times):
-        vals = interp_pops[i, :]
-        row = {
-            'proposal_idx': proposal_idx,
-            'colonization': float(params[0].cpu()),
-            'replication': float(params[1].cpu()),
-            'capacity': float(params[2].cpu()),
-            'expulsion': float(params[3].cpu()),
-            'time': float(t),
-            'mean': float(np.mean(vals)),
-            'std': float(np.std(vals)),
-            'median': float(np.median(vals)),
-            'q25': float(np.percentile(vals, 25)),
-            'q75': float(np.percentile(vals, 75)),
-        }
-        rows.append(row)
-    df = pd.DataFrame(rows)
-    df.to_csv(summary_path, mode='a', header=False, index=False)
-
 
 try:
     for s in tqdm(range(start_step, total_steps)):
