@@ -1,11 +1,13 @@
 import pandas as pd
 import numpy as np
+import os
 
-def load_and_clean_real_data(filepath, cutoff=300, verbose=True):
+def load_and_clean_real_data(filepath, cutoff=300, verbose=True, save_dir=None):
     df = pd.read_csv(filepath)
 
     # Define possible CFU columns and their corresponding dilution factors
     dilution_map = {
+        "CFU_2": 2.2,
         "CFU_22": 22,
         "CFU_222": 222,
         "CFU_2222": 2222,
@@ -37,7 +39,7 @@ def load_and_clean_real_data(filepath, cutoff=300, verbose=True):
         if np.any(under_cutoff[i]):
             idx = np.argmax(under_cutoff[i])  # first under cutoff, least diluted
         elif np.any(valid[i]):
-            idx = np.argmax(valid[i])         # fallback: first valid entry
+            idx = np.argmax(valid[i])  # fallback: first valid entry
         else:
             selected_idx.append(None)
             continue
@@ -68,5 +70,13 @@ def load_and_clean_real_data(filepath, cutoff=300, verbose=True):
         print(f"[INFO] Loaded {total} rows from {filepath}")
         print(f"[INFO] Retained {kept} rows with valid CFU entries.")
         print(f"[INFO] Dropped {dropped} rows with no valid CFU values at any dilution.")
+
+    # === Save cleaned result ===
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        outpath = os.path.join(save_dir, os.path.basename(filepath).replace(".csv", "_CLEANED.csv"))
+        df_result.to_csv(outpath, index=False)
+        if verbose:
+            print(f"[✓] Cleaned data saved to: {outpath}")
 
     return df_result
