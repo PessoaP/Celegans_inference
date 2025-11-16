@@ -6,8 +6,13 @@ from sklearn.mixture import GaussianMixture  # For the naive fitting of a Gaussi
 from matplotlib import pyplot as plt
 from matplotlib.ticker import ScalarFormatter, AutoLocator, FuncFormatter
 import warnings
-import math
-import numpy as np
+
+# Precompute constant values used in the Gaussian likelihood function.
+lsqrt2pi = (1 / 2) * log(2 * pi)
+l10 = log(10)
+
+# Define lambda functions for common probability calculations.
+# log_comb computes the log of the binomial coefficient.
 from scipy.special import gammaln
 
 def sp_lgamma(t: torch.Tensor) -> torch.Tensor:
@@ -17,11 +22,6 @@ def sp_lgamma(t: torch.Tensor) -> torch.Tensor:
     """
     y = gammaln(t.detach().cpu().numpy())
     return torch.from_numpy(y).to(device=t.device, dtype=t.dtype)
-
-# Precompute constant values used in the Gaussian likelihood function.
-lsqrt2pi = (1 / 2) * log(2 * pi)
-l10 = log(10)
-
 # Define lambda functions for common probability calculations.
 # log_comb computes the log of the binomial coefficient.
 log_comb = lambda n, k: sp_lgamma(n + 1) - sp_lgamma(k + 1) - sp_lgamma(n - k + 1)
@@ -30,7 +30,7 @@ binomial_loglike = lambda k, n, p: log_comb(n, k) + k * torch.log(p) + (n - k) *
 # gaussian_loglike computes the log likelihood of a Gaussian given data x, mean mu, and std dev sig.
 gaussian_loglike = lambda x, mu, sig: - torch.pow(((x - mu) / sig), 2) / 2 - torch.log(sig) - lsqrt2pi
 # poisson_loglike computes the log likelihood for a Poisson outcome.
-poisson_loglike = lambda k, rate: k * torch.log(rate) - rate - sp_lgamma(k + 1)
+poisson_loglike = lambda k, rate: k * torch.log(rate) - rate - torch.lgamma(k + 1)
 
 # Set a weak limit constant, used later in parameter estimation.
 weak_limit = 25
@@ -176,7 +176,7 @@ class dataset():
         # Use GPU if available.
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # Convert counts and dilutions to column tensors.
-        self.counts = torch.tensor(counts.reshape(-1, 1))
+        self.counts = torch.tensor(counts.reshape(-1, 1)).int()
         self.dils = torch.tensor(dils.reshape(-1, 1))
 
         self.ndatapoints = self.counts.size(0)
@@ -187,8 +187,8 @@ class dataset():
         self.Nmin = 1
         self.Nmax = 2 * self.ML.max() + 1
         self.width = torch.tensor(self.Nmax, device=self.device)
-        self.n = torch.arange(self.Nmax)
-        
+        self.n = torch.arange(self.Nmax).float()
+
         #self.lpkdil_n = get_lpkdil_n(self.counts,self.dils,self.n,cutoff,self.Nmax).to(self.device)
         self.n = self.n.to(self.device)        
 
@@ -234,21 +234,7 @@ class dataset():
         indices = argsort(-prov_rhos)
         prov_mus, prov_sigs, prov_rhos = prov_mus[indices], prov_sigs[indices], prov_rhos[indices]
 
-        self.ML_estimated = (torch.tensor(prov_mus).clip(self.Nmin+.01), torch.tensor(prov_sigs), torch.tensor(prov_rhos))  # make sure the Gaussian mixture model is not negative
-        return self.ML_estimated
-
-    def evaluate(self, components=weak_limit, tol=1e-5, lr=0.01, observe=False, dir_factor=0.9, component_cut=1/50):
-        """
-        Optimize the mixture model parameters (theta) by maximizing the data log-likelihood plus prior.
-        Uses an Adam optimizer and periodically reorders the parameters.
-        """
-        self.lpkdil_n = get_lpkdil_n(self.counts.to(self.device),
-                                     self.dils.to(self.device),
-                                     self.n.to(self.device),
-                                     self.cutoff,self.Nmax).to(self.device)
-
-        if components == weak_limit:
-            components = self.weaklimit #If no number of components where specified it will change the smallest number of components between the default and the square root of the number of datapoind
+        self.ML_estimated = (torch.tensor(prov_mus), torch.tensor(prov_sigs), torch.tensor(prov_rhos))#egative components where specified it will change the smallest number of components between the default and the square root of the number of datapoind
         if not torch.cuda.is_available():
             warnings.warn( "CUDA-compatible GPU not detected. REPOP is optimized for working on GPU, and performance may be significantly slower on a CPU." )
 

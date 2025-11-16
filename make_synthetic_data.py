@@ -3,7 +3,8 @@ import torch
 import numpy as np
 import pandas as pd
 
-from simulator import sample
+
+from utils.simulator import sample
 
 class SyntheticSimulator:
     """

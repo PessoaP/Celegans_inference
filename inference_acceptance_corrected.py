@@ -10,6 +10,7 @@ import time
 import traceback
 
 # === Imports ===
+sys.path.append(os.path.join(os.path.dirname(__file__), "utils"))
 from dataclass import TimeSeriesInferenceDataset
 import mcmc
 from simulator import ConstrainedLogNormalPrior
