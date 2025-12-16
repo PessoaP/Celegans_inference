@@ -12,10 +12,9 @@ import traceback
 # === Imports ===
 sys.path.append(os.path.join(os.path.dirname(__file__), "utils"))
 from dataclass import TimeSeriesInferenceDataset
-import mcmc
-from simulator import ConstrainedLogNormalPrior
-from load_and_clean_real_data import load_and_clean_real_data
-from configure_plotting import configure_plotting
+from utils import mcmc
+from utils.load_and_clean_real_data import load_and_clean_real_data
+from utils.configure_plotting import configure_plotting
 from plot_helpers import plot_intermediate_histograms, plot_logposterior_trace
 
 # === Configuration ===
@@ -84,7 +83,7 @@ full_dataset = TimeSeriesInferenceDataset(ts, counts, dils, cutoff=300)
 prior, initial_guess = mcmc.make_prior_from_initial_guess(full_dataset, frac_error=0.5, device=device)
 infer_idx = None # all parameters will be auto-inferred if there's no specified subset
 # infer_idx = [0]  # Example: infer only colonization 
-ground_truth = torch.tensor([1/20, 1/4, 1e5, 0.1], device=device) 
+ground_truth = torch.tensor([1/20, 0.25, 1e6, 0.2] device=device) 
 
 # Overwrite non-inferred params with ground truth if they exist
 if infer_idx is not None:
@@ -92,7 +91,7 @@ if infer_idx is not None:
         if i not in infer_idx:
             initial_guess[i] = ground_truth[i]
 
-init_L = 1e-2 * torch.diag(torch.tensor((1, 1, 1, 5), device=device))
+init_L = 1e-3 * torch.diag(torch.tensor((1, 1, 1, 5), device=device))
         
 # === u-space target and initial state ===
 logposterior_u = mcmc.make_logposterior_u(full_dataset, prior) # the posterior in u = log(θ) space
@@ -102,10 +101,10 @@ state = mcmc.SamplerState(L=init_L)
 
 
 # === MCMC Settings ===
-n_burn1 = 0
-n_burn2 = 2000
-n_mcmc  = 10000
-sample_window = 200
+n_burn1 = 100
+n_burn2 = 200
+n_mcmc  = 1000
+sample_window = 100
 total_steps = n_burn1 + n_burn2 + n_mcmc
 
 dim = initial_guess.shape[0]
@@ -139,61 +138,6 @@ if True:
     state = mcmc.SamplerState(L=init_L)
     actual_n_burn1 = n_burn1
     log(f"ODE guess, with fixed params set to GT: {initial_guess.cpu().numpy()}")
-
-
-# # === Intermediate plotting functions ===
-# def plot_intermediate_histograms(samples, step, output_dir, n_burn1, n_burn2):
-#     samples_np = samples.cpu().numpy()
-#     burn_cutoff = n_burn1 + n_burn2
-
-#     if step <= burn_cutoff:
-#         samples_to_plot = samples_np[:step]
-#         phase = "burnin"
-#     else:
-#         samples_to_plot = samples_np[burn_cutoff:step]
-#         phase = "posterior"
-
-#     fig, ax = plt.subplots(1, 4, figsize=(16, 4))
-#     xlabels = ['Colonization rate (/h)', 'Replication rate (/h)', 'Capacity', 'Expulsion rate (/h)']
-#     for i in range(4):
-#         data = samples_to_plot[:, i]
-#         unique_vals = np.unique(data)
-#         if unique_vals.size > 1:
-#             n_bins = min(30, unique_vals.size)
-#             ax[i].hist(data, bins=n_bins, density=True, alpha=0.7)
-#         else:
-#             ax[i].bar(unique_vals[0], height=1.0, width=0.1, alpha=0.7)
-#             ax[i].set_xlim([unique_vals[0] - 0.5, unique_vals[0] + 0.5])
-#             ax[i].set_ylim(bottom=0)
-#             ax[i].text(unique_vals[0], 0.5, 'All samples identical', ha='center', va='center', color='red')
-#         ax[i].set_xlabel(xlabels[i])
-        
-#         # Overlay ground truth as dotted vertical line
-#         ax[i].axvline(float(ground_truth[i]), color='k', linestyle=':', linewidth=2, label='Ground truth')
-    
-#     fig.suptitle(f"{phase.capitalize()} Histograms up to Step {step}", fontsize=14)
-#     fig.tight_layout(rect=[0, 0, 1, 0.95])
-
-#     png_path = os.path.join(output_dir, f"hist_step{step:04d}_{phase}.png")
-#     svg_path = os.path.join(output_dir, f"hist_step{step:04d}_{phase}.svg")
-#     fig.savefig(png_path, dpi=300)
-#     fig.savefig(svg_path, format='svg')
-#     plt.close(fig)
-
-# def plot_logposterior_trace(mcmc_lps, step, output_dir, actual_n_burn1, n_burn2):
-#     lps = np.array(mcmc_lps)
-#     burn_cutoff = actual_n_burn1 + n_burn2
-#     fig, ax = plt.subplots(figsize=(8, 3))
-#     ax.plot(np.arange(len(lps)), lps, label='Log-posterior')
-#     ax.axvline(burn_cutoff, color='red', linestyle='--', label='End of burn-in')
-#     ax.set_xlabel('Step')
-#     ax.set_ylabel('Log posterior')
-#     ax.set_title(f'Log-posterior trace up to step {step}')
-#     ax.legend()
-#     fig.tight_layout()
-#     plt.savefig(os.path.join(output_dir, f'logposterior_step{step:04d}.png'), dpi=300)
-#     plt.savefig(os.path.join(output_dir, f'logposterior_step{step:04d}.svg'), format='svg')
-#     plt.close(fig)
 
 
 # === Main MCMC Loop ===

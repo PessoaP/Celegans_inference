@@ -1,9 +1,24 @@
 import os
 import torch
 import numpy as np
-from simulator import ConstrainedLogNormalPrior
 
 # === Prior Construction from ODE Initialization (CPU) ===
+class ConstrainedLogNormalPrior:
+    def __init__(self, loc, scale):
+        self.base = torch.distributions.LogNormal(loc, scale)
+
+    def log_prob(self, x):
+        if x[1] < x[3]:
+            return torch.tensor(float('-inf'), device=x.device)
+        return self.base.log_prob(x).sum()
+
+    def sample(self):
+        for _ in range(1000):
+            x = self.base.sample().to(self.base.loc.device)
+            if x[1] >= x[3]:
+                return x
+        raise RuntimeError("Failed to sample satisfying x[1] >= x[3] after 100 attempts.")
+
 def make_prior_from_initial_guess(dataset, frac_error=0.5, device=None, min_logstd=1e-2):
     """
     Build a lognormal prior around the ODE initialization.
@@ -47,33 +62,48 @@ def logabsdet_J_exp(u):
 
 
 # === Target in u-space (posterior ∘ exp + Jacobian) ===
-def make_logposterior_u(data, prior):
+def make_logposterior_u(data, prior, debug=False):
     def logposterior_u(u):
         theta = to_theta(u)                      # positivity
         if torch.any(theta <= 0) or torch.any(~torch.isfinite(theta)):
             return torch.tensor(-float('inf'), device=u.device)
 
-        lp = prior.log_prob(theta).sum()         # prior in θ-space
-        if not torch.isfinite(lp):
+        lp = prior.log_prob(theta)         # prior in θ-space
+        ll = data.loglike(theta)           # likelihood at θ(u)
+        jac = logabsdet_J_exp(u)           # Jacobian for θ = exp(u)
+        
+        if debug:
+            print("theta:", theta.detach().cpu().numpy())
+            print("  lp (prior):", float(lp))
+            print("  ll (likelihood):", float(ll))
+            print("  jacobian:", float(jac))
+            print("  total:", float(lp + ll + jac))
+            print("-" * 40)
+
+        if not torch.isfinite(lp) or not torch.isfinite(ll):
             return torch.tensor(-float('inf'), device=u.device)
 
-        ll = data.loglike(theta)                 # likelihood at θ(u)
-        if not torch.isfinite(ll):
-            return torch.tensor(-float('inf'), device=u.device)
-
-        return lp + ll + logabsdet_J_exp(u)      # add Jacobian for u->θ
+        return lp + ll + jac
     return logposterior_u
 
 
 # === Proposals in u-space (full & block) with step scaling ===
 def full_proposal(u, L, step_scale=1.0):
-    """Random-walk proposal: u' = u + (step_scale * L) @ N(0, I)."""
+    """
+    Random-walk proposal: u' = u + (step_scale * L) @ N(0, I).\
+    L: lower-triangular Cholesky of covariance in u-space.
+    step_scale: scalar multiplier for step size.
+    Used for simultaneous updates of all parameters.
+    """
     z = torch.randn_like(u)
     return u + (L * step_scale) @ z
 
 def block_proposal_u(u, L, update_idx, step_scale=1.0):
-    """Block/coordinate proposal on indices update_idx (or full if None)."""
-    if not update_idx:  # None or empty -> full update
+    """
+    Block/coordinate proposal on indices update_idx (or full if None).
+    Used to only update a subset of parameters per MCMC step.
+    """
+    if update_idx is None or len(update_idx) == 0:  # None or empty -> full update
         return full_proposal(u, L, step_scale)
 
     up  = u.clone()
@@ -159,7 +189,7 @@ def adapt_covariance_u(u_history,
             return L.to(dtype=u_history.dtype, device=device)
         except RuntimeError:
             jitter = (10.0 ** i) * max(1e-12, 1e-4 * med)
-            C = C + jitter * eye
+            C = C + jitter * eye # add jitter until Cholesky works
 
     # final fallback: diagonal proposal
     C = torch.diag(torch.clamp(torch.diag(C), min=max(1e-10, 1e-6 * med)))

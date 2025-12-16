@@ -1,38 +1,17 @@
 # Import necessary libraries
 import torch
-from numpy import sqrt, argsort, random, unique, log10, arange, log, pi, isnan
-random.seed(42) 
+from numpy import sqrt, argsort, random, arange#, log
+random.seed(42)
+
 from sklearn.mixture import GaussianMixture  # For the naive fitting of a Gaussian mixture model
 from matplotlib import pyplot as plt
 from matplotlib.ticker import ScalarFormatter, AutoLocator, FuncFormatter
 import warnings
 
-# Precompute constant values used in the Gaussian likelihood function.
-lsqrt2pi = (1 / 2) * log(2 * pi)
-l10 = log(10)
-
-# Define lambda functions for common probability calculations.
-# log_comb computes the log of the binomial coefficient.
-from scipy.special import gammaln
-def sp_lgamma(t):
-    y = gammaln(t.detach().cpu().numpy())
-    return torch.from_numpy(y).to(device=t.device)
-
-# Define lambda functions for common probability calculations.
-# log_comb computes the log of the binomial coefficient.
-log_comb = lambda n, k: sp_lgamma(n + 1) - sp_lgamma(k + 1) - sp_lgamma(n - k + 1)
-# binomial_loglike computes the log likelihood for a binomial outcome.
-binomial_loglike = lambda k, n, p: log_comb(n, k) + k * torch.log(p) + (n - k) * torch.log(1 - p)
-# gaussian_loglike computes the log likelihood of a Gaussian given data x, mean mu, and std dev sig.
-gaussian_loglike = lambda x, mu, sig: - torch.pow(((x - mu) / sig), 2) / 2 - torch.log(sig) - lsqrt2pi
-# poisson_loglike computes the log likelihood for a Poisson outcome.
-poisson_loglike = lambda k, rate: k * torch.log(rate) - rate - torch.lgamma(k + 1)
+from .utils import *
 
 # Set a weak limit constant, used later in parameter estimation.
 weak_limit = 25
-
-# Simple normalization function.
-normalize = lambda x: x / x.sum()
 
 def counts_loglike(k, n, phi):
     """
@@ -41,33 +20,7 @@ def counts_loglike(k, n, phi):
     lp_bin = binomial_loglike(k, n, 1. / phi)
     return lp_bin
 
-def Igaussmix_loglike(n, mus, sigs, rhos):
-    """
-    Computes the normalized log likelihood over values `n` for a Gaussian mixture model.
 
-    Parameters:
-      n: tensor of values to evaluate (e.g., indices or data points)
-      mus: means of the Gaussian components (shape: [components])
-      sigs: standard deviations of the components (shape: [components])
-      rhos: mixture weights (shape: [components])
-
-    Returns:
-      lpn: log probability at each n, normalized to sum to one (shape: [n])
-    """
-    # Reshape mus and sigs to shape [components, 1] so that broadcasting works:
-    # each row is a component, each column is a value of `n`
-    terms_unorm = gaussian_loglike(n, mus.reshape(-1, 1), sigs.reshape(-1, 1))
-
-    # Normalize each row (i.e., each component) across n values
-    terms = terms_unorm - torch.logsumexp(terms_unorm, axis=1).reshape(-1, 1)
-
-    # Add log of mixing weights (reshaped to [components, 1] to match n columns)
-    lpn_unorm = torch.logsumexp(terms + torch.log(rhos.reshape(-1, 1)), axis=0)
-
-    # Normalize final log likelihood across all n (log-probability over `n`)
-    lpn = lpn_unorm - torch.logsumexp(lpn_unorm, axis=0)
-
-    return lpn
 
 def theta2params(theta, components=weak_limit):
     """
@@ -93,16 +46,6 @@ def params2theta(mus, sigs, rhos):
     return torch.hstack((torch.log(mus),
                          torch.log(sigs),
                          torch.log(rhos)))
-
-def logm1exp(x):
-    """
-    Numerically stable computation for log(1 - exp(x)).
-    """
-    mask = (x > -1)
-    res = torch.zeros_like(x)
-    res[mask] += torch.log(-torch.expm1(x[mask]))
-    res[~mask] += torch.log1p(-torch.exp(x[~mask]))
-    return res
 
 def dils_switch(dils, N, cutoff):
     """
@@ -172,7 +115,7 @@ class dataset():
         # Use GPU if available.
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # Convert counts and dilutions to column tensors.
-        self.counts = torch.tensor(counts.reshape(-1, 1)).int()
+        self.counts = torch.tensor(counts.reshape(-1, 1))
         self.dils = torch.tensor(dils.reshape(-1, 1))
 
         self.ndatapoints = self.counts.size(0)
@@ -180,11 +123,11 @@ class dataset():
 
         # Compute the maximum likelihood (naive) estimate: counts multiplied by the dilution factors.
         self.ML = (counts * dils).clip(min=1).reshape(-1, 1)
-        self.Nmin = 1
+        self.Nmin = 0
         self.Nmax = 2 * self.ML.max() + 1
         self.width = torch.tensor(self.Nmax, device=self.device)
-        self.n = torch.arange(self.Nmax).float()
-
+        self.n = torch.arange(self.Nmax)
+        
         #self.lpkdil_n = get_lpkdil_n(self.counts,self.dils,self.n,cutoff,self.Nmax).to(self.device)
         self.n = self.n.to(self.device)        
 
@@ -196,13 +139,17 @@ class dataset():
         Compute a log-prior over the mixture parameters.
         A weak prior is imposed on the means (after scaling) and sigmas.
         """
-        mus_shifted = (mus - self.Nmin) / self.width
-        lp = 0.1 * (torch.log(mus_shifted) + torch.log(1 - mus_shifted))
-        lp += gaussian_loglike(torch.log(sigs), torch.log(mus), torch.ones_like(mus)) - torch.log(sigs)
+        eps = 1e-6
+        mus_shifted = torch.clamp((mus - self.Nmin) / self.width, eps, 1 - eps)
+
+        lp = 0.1 * (torch.log(mus_shifted) + torch.log(1 - mus_shifted)) #logprior
+        mus_safe = torch.clamp(mus, min=eps)
+        lp += gaussian_loglike(torch.log(sigs), torch.log(mus_safe), torch.ones_like(mus_safe)) - torch.log(sigs)
+        
         if components != 1:
             return self.rhosprior.log_prob(rhos) + lp.sum()
         return lp.sum()
-
+        
     def loglike(self, theta, components, total=False):
         """
         Compute the log likelihood of the data given the mixture parameters encoded in theta.
@@ -221,16 +168,40 @@ class dataset():
         """
         gmm = GaussianMixture(n_components=components, covariance_type='full')
         gmm.fit(self.ML)
-
-        prov_mus = gmm.means_.reshape(-1)
+        
+        prov_mus  = gmm.means_.reshape(-1)
         prov_sigs = sqrt(gmm.covariances_).reshape(-1)
         prov_rhos = gmm.weights_
+
+        # Clamp sigmas away from zero
+        eps_sig = 1e-6
+        prov_sigs = np.clip(prov_sigs, eps_sig, None)
 
         # Sort the estimated parameters by their weights in descending order.
         indices = argsort(-prov_rhos)
         prov_mus, prov_sigs, prov_rhos = prov_mus[indices], prov_sigs[indices], prov_rhos[indices]
 
-        self.ML_estimated = (torch.tensor(prov_mus), torch.tensor(prov_sigs), torch.tensor(prov_rhos))#egative components where specified it will change the smallest number of components between the default and the square root of the number of datapoind
+        self.ML_estimated = (torch.tensor(prov_mus).clip(self.Nmin+.01), 
+                             torch.tensor(prov_sigs), torch.tensor(prov_rhos))  # make sure the Gaussian mixture model is not negative
+        return self.ML_estimated
+    
+    def get_lpkdil_n(self):
+        if not hasattr(self, "lpkdil_n") or self.lpkdil_n is None:
+            self.lpkdil_n = get_lpkdil_n(self.counts.to(self.device),
+                                         self.dils.to(self.device),
+                                         self.n.to(self.device),
+                                         self.cutoff,self.Nmax).to(self.device)
+        return self.lpkdil_n
+
+    def evaluate(self, components=weak_limit, tol=1e-5, lr=0.01, observe=False, dir_factor=0.9, component_cut=1/50):
+        """
+        Optimize the mixture model parameters (theta) by maximizing the data log-likelihood plus prior.
+        Uses an Adam optimizer and periodically reorders the parameters.
+        """
+        self.lpkdil_n = self.get_lpkdil_n()
+
+        if components == weak_limit:
+            components = self.weaklimit #If no number of components where specified it will change the smallest number of components between the default and the square root of the number of datapoind
         if not torch.cuda.is_available():
             warnings.warn( "CUDA-compatible GPU not detected. REPOP is optimized for working on GPU, and performance may be significantly slower on a CPU." )
 
@@ -286,26 +257,43 @@ class dataset():
     
     def get_reconstruction(self, narray=None, cpu=True):
         if narray is None:
-            x = self.n[1:]
+            x = self.n          # include 0
         else:
-            x = narray*1.
-        m, s, r =  self.ev
+            x = narray * 1.
+        m, s, r = self.ev
         p = torch.exp(Igaussmix_loglike(x, m, s, r))
         if cpu:
-            x,p = x.cpu(),p.cpu()
-
-        return x,p
+            x, p = x.cpu(), p.cpu()
+        return x, p
     
-    def get_logreconstruction(self, narray=None, cpu=True, base = 10.):
-        if narray is None:
-            x = self.n[1:]
+    def get_logreconstruction(self, narray=None, cpu=True, base=10.,show_zero=False):
         lbase = log(base)
-        x, p = self.get_reconstruction(x,cpu)
 
-        log_narray = torch.log(x)/ lbase
-        p_logspace = p * x * lbase
+        # First get the full discrete pmf including n=0
+        if narray is None:
+            x_full = self.n
+        else:
+            x_full = narray * 1.
 
-        return log_narray, p_logspace
+        x_full, p_full = self.get_reconstruction(x_full, cpu)
+
+        # Separate zero and positive n
+        mask_pos = x_full > 0
+        x_pos = x_full[mask_pos]
+        p_pos = p_full[mask_pos]
+
+
+        # Log-space transform for n >= 1
+        log_narray = torch.log(x_pos) / lbase
+        p_logspace = p_pos * x_pos * lbase
+
+        # Return log-space stuff plus p0 so plotting code can use it
+        if show_zero:
+            # Save the mass at n = 0
+            p0 = p_full[~mask_pos].sum()  # should just be a scalar
+            return log_narray, p_logspace, (p0.item())
+        return log_narray, p_logspace,
+
 
 
     def dil_hist(self, ax):
@@ -375,41 +363,73 @@ class dataset():
                             bins=bins, density=True,
                             label=r'Dilution $\times$ Counts')
         
-    def log_plots(self, ax, th_gt=None,bins=30):
-        """
-        Plot a histogram of the log10(dilution x counts) and overlay the reconstructed
-        distribution (p(n)) from the Gaussian mixture model. Optionally, plot the ground truth.
-        """
-        n_logspace,p_logspace = self.get_logreconstruction(cpu=True)
-        ax.plot(n_logspace, p_logspace, label=r'REPOP')
-        h = ax.hist(torch.log10((self.counts * self.dils)).clamp(0).reshape(-1),
-                    alpha=0.5, bins=bins, density=True, label=r'Dilution $\times$ Counts')
-        
-        # If any count is zero, color its bin red.
-        if torch.any(self.counts == 0):
+    def log_plots(self, ax, th_gt=None, bins=30, show_zero=False):
+        # Get reconstruction in log-space + mass at zero
+        if show_zero:
+            n_logspace, p_logspace, p0 = self.get_logreconstruction(cpu=True, show_zero=show_zero)
+        else:
+            n_logspace, p_logspace = self.get_logreconstruction(cpu=True, show_zero=show_zero)
+            p0 = None
 
+        # Plot the reconstructed density over log10(n) for n >= 1
+        ax.plot(n_logspace, p_logspace, label=r'REPOP')
+
+        # Histogram of log10(dilution * counts), still fine
+        h = ax.hist(
+            torch.log10((self.counts * self.dils)).clamp(0).reshape(-1),
+            alpha=0.5,
+            bins=bins,
+            density=True,
+            label=r'Dilution $\times$ Counts'
+        )
+
+        # Highlight the bin around zero counts in red (unchanged from your code)
+        if torch.any(self.counts == 0):
             bin_edges = h[1]
             bin_heights = h[0]
             for i in range(len(bin_edges) - 1):
                 if bin_edges[i] <= 0 < bin_edges[i + 1]:
                     bin_zero_index = i
-                    ax.bar((bin_edges[bin_zero_index] + bin_edges[bin_zero_index + 1]) / 2, bin_heights[i],
-                        width=bin_edges[bin_zero_index + 1] - bin_edges[bin_zero_index], alpha=0.25, color='red')
+                    ax.bar(
+                        (bin_edges[bin_zero_index] + bin_edges[bin_zero_index + 1]) / 2,
+                        bin_heights[i],
+                        width=bin_edges[bin_zero_index + 1] - bin_edges[bin_zero_index],
+                        alpha=0.25,
+                        color='red'
+                    )
                     break
-        # Compute the reconstructed distribution using the Gaussian mixture likelihood.
 
-        ax.set_ylim(0, 1.1 * (p_logspace.max()))
+        # NEW: show P(N=0) as a separate marker
+        if p0 is not None and p0 > 0:
+            # Put it slightly to the left of the plotted domain
+            x_marker = n_logspace.min() - 0.3  # shift left a bit
+            ax.scatter([x_marker], [p0], marker='o')
+            ax.text(
+                x_marker,
+                p0,
+                f"P(0)={p0:.2e}",
+                ha='right',
+                va='bottom',
+                rotation=90,
+                fontsize=8
+            )
+
+            ax.set_ylim(0, 1.1 * max(p_logspace.max(), p0 if p0 > 0 else 0.0))
+        else:
+            ax.set_ylim(0, 1.1 * p_logspace.max())
+
         if th_gt is not None:
-            x = torch.pow(10,n_logspace)
-            p_gt = torch.exp(Igaussmix_loglike(x, *theta2params(th_gt, th_gt.size(0) // 3)))
-            y_gt = p_gt * x * l10
+            # Ground truth, only for n >= 1; that's fine.
+            x_pos = torch.pow(10, n_logspace)
+            p_gt = torch.exp(
+                Igaussmix_loglike(x_pos, *theta2params(th_gt, th_gt.size(0) // 3))
+            )
+            y_gt = p_gt * x_pos * log(10.0)
             ax.plot(n_logspace, y_gt, label=r'Ground truth', color='k')
-            ax.set_ylim(0, 1.1 * max(p_logspace.max(), y_gt.max()))
-
+            ax.set_ylim(0,1.1 * max(p_logspace.max(),y_gt.max(),p0 if p0 > 0 else 0.0))
 
         ax.set_xlim(h[1][0] * 0.9, h[1][-1] * 1.01)
         ax.set_xlabel(r'$\log_{10}$ (Number of bacteria)', fontsize=15)
-        #ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos: rf"$10^{{{x:.1f}}}$"))
         ax.set_ylabel('Density')
 
 

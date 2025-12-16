@@ -11,19 +11,14 @@ import traceback
 
 # === Imports ===
 sys.path.append(os.path.join(os.path.dirname(__file__), "utils"))
-from dataclass import TimeSeriesInferenceDataset
-import mcmc
-from simulator import ConstrainedLogNormalPrior
-from configure_plotting import configure_plotting
+from utils.dataclass import TimeSeriesInferenceDataset
+from utils import mcmc
+from utils.configure_plotting import configure_plotting
+from utils.load_and_clean_real_data import load_and_cnmlean_real_data
 
 # === Configuration ===
 torch.manual_seed(15)
 np.random.seed(15)
-
-# Ensure GPU reproducibility by forcing bitwise identical outputs (use for unit tests)
-#torch.backends.cudnn.deterministic = True
-#torch.backends.cudnn.benchmark = False
-#torch.use_deterministic_algorithms(True)
 
 configure_plotting()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -72,17 +67,18 @@ if infer_idx is not None:
 init_L = 1e-3 * torch.diag(torch.tensor((1, 1, 1, 5), device=device))
         
 # === u-space target and initial state ===
-logposterior_u = mcmc.make_logposterior_u(full_dataset, prior) # the posterior in u = log(θ) space
+logposterior_u = mcmc.make_logposterior_u(full_dataset, prior, debug=True) # the posterior in u = log(θ) space
 u = mcmc.to_u(initial_guess)           # carry state in u
+log("DEBUG: evaluating initial log-posterior")
 lp_u = logposterior_u(u)
 state = mcmc.SamplerState(L=init_L)  
 
 
 # === MCMC Settings ===
-n_burn1 = 1000
-n_burn2 = 4000
-n_mcmc  = 10000
-sample_window = 500
+n_burn1 = 0
+n_burn2 = 400
+n_mcmc  = 1000
+sample_window = 100
 total_steps = n_burn1 + n_burn2 + n_mcmc
 
 dim = initial_guess.shape[0]

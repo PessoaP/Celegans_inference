@@ -21,13 +21,6 @@ class SyntheticSimulator:
         _, E = sample(self.params, T=T, N=size, device=self.device)
         return E
 
-    def sample_data(self, size=75, Ts=torch.tensor([1, 3, 5, 7, 9])):
-        print(f"Simulating for {size} worms per day, days = {Ts.tolist()}")
-        Ts = Ts.clone().to(self.device).float()
-        T_batch = Ts.repeat_interleave(size) * 24  # Convert days to hours
-        print(f"T_batch shape: {T_batch.shape}, values: {T_batch[:10]}")
-        n_sam = self.sample_n(size=T_batch.numel(), T=T_batch).cpu()
-        print(f"n_sam: min={n_sam.min()}, max={n_sam.max()}, dtype={n_sam.dtype}")
 
     def sample_data(self, size=75, Ts=torch.tensor([1, 3, 5, 7, 9])):
         """
@@ -53,6 +46,9 @@ class SyntheticSimulator:
             'CFU_2222': c3.int().cpu().numpy(),
             'Day': np.repeat(Ts.cpu().numpy(), size)
         })
+        df["Day"] = df["Day"].astype(int)
+        df["Worm #"] = df["Worm #"].astype(int)
+
         return df
 
     def sample_save(self, size=75, Ts=torch.tensor([1, 3, 5, 7, 9]), filename="synthetic_data/synthetic_data.csv"):
@@ -66,7 +62,7 @@ class SyntheticSimulator:
 
 if __name__ == "__main__":
     # Example parameter vector: adjust as needed
-    params = torch.tensor([1/20, 1/4, 1e5, 0.1])
+    params = torch.tensor([1/20, 0.25, 1e6, 0.2])
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     sim = SyntheticSimulator(params=params, device=device)
 

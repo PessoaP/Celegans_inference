@@ -153,8 +153,10 @@ def step(params, E, t0, T, E_tol=1e3):
         dt[use_tau], dE[use_tau] = tau_leap(params[:, use_tau], 
                                             E[use_tau], 
                                             (T - t0)[use_tau])
+    
+    E_new = torch.clamp(E + dE, min=0)  # Ensure E doesn't go negative
 
-    return t0 + dt, E + dE
+    return t0 + dt, E_new
 
 def sample(params, E_initial=None, T=48, N=None, 
            device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
