@@ -1,0 +1,5 @@
+2025-12-17 09:08:40 | Starting inference on: synthetic_data/synthetic_data.csv
+2025-12-17 09:08:40 | Output dir: inference_outputs/synthetic_data
+2025-12-17 09:11:36 | ODE guess, with fixed params set to GT: [6.2640595e-01 1.4485587e-01 2.3997600e+05 9.9999994e-02]
+2025-12-17 09:11:36 | Starting MCMC sampling...
+2025-12-17 09:22:29 | [Auto-exit] Greedy phase ended early at step 37 after 20 stalled steps.

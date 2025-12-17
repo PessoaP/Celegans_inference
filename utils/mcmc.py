@@ -123,6 +123,43 @@ def propose_mixture(u, L, update_idx=None, small=0.8, big=2.0, p_big=0.12):
     step_scale = big if (torch.rand((), device=u.device) < p_big) else small
     return block_proposal_u(u, L, update_idx, step_scale=step_scale)
 
+# === Better proposal to deal with intederminicy between replication and death rates ===
+def propose_full_with_pair_corrmix(u, L, step_scale=1.0, pair=(1, 3), rho=0.95, p_anticorr=0.5):
+    """
+    Full random-walk proposal in u-space, but force (u[i], u[j]) to be proposed
+    from a mixture of correlated (+rho) and anticorrelated (-rho) 2D Gaussians.
+
+    L: Cholesky for proposal covariance in u-space (d,d)
+    """
+    # baseline full proposal increment
+    z = torch.randn_like(u)
+    du = (L * step_scale) @ z
+
+    i, j = pair
+    device, dtype = u.device, u.dtype
+
+    # Use marginal scales from L (diagonal) for the pair
+    si = torch.clamp(L[i, i].to(dtype), min=torch.tensor(1e-12, device=device, dtype=dtype))
+    sj = torch.clamp(L[j, j].to(dtype), min=torch.tensor(1e-12, device=device, dtype=dtype))
+
+    # choose correlated (+) or anticorrelated (-)
+    sign = -1.0 if (torch.rand((), device=device) < p_anticorr) else 1.0
+    r = sign * rho
+
+    # 2D correlated standard normal via Cholesky of [[1, r],[r,1]]
+    # then scale by (si, sj)
+    L2 = torch.tensor([[1.0, 0.0],
+                       [r, float(np.sqrt(max(1e-12, 1.0 - float(r*r))))]],
+                      device=device, dtype=dtype)
+
+    z2 = torch.randn(2, device=device, dtype=dtype)
+    eps2 = L2 @ z2  # ~ N(0, [[1,r],[r,1]])
+
+    du[i] = si * eps2[0] * step_scale
+    du[j] = sj * eps2[1] * step_scale
+
+    return u + du
+
 
 # === Adapt in u-space ===
 def adapt_covariance_u(u_history,
@@ -231,9 +268,21 @@ def next_MCMC_sample_u(logposterior_u, u, lp_u, state,
     # align L to u
     state.L = state.L.to(dtype=u.dtype, device=u.device)
 
-    # propose (coordinate or full) with a small/large mixture
-    up = propose_mixture(u, state.L, update_idx,
-                         small=proposal_small, big=proposal_big, p_big=proposal_p_big)
+    # propose (coordinate or full) with a small/large mixture and also pair-correlated jumps
+    # choose mixture-of-scales step size 
+    step_scale = proposal_big if (torch.rand((), device=u.device) < proposal_p_big) else proposal_small
+
+    up = propose_full_with_pair_corrmix(
+        u=u,
+        L=state.L,
+        step_scale=step_scale,
+        pair=(1, 3),
+        rho=0.95,
+        p_anticorr=0.5,   # tune this; often 0.1–0.3 is better than 0.5
+    )
+
+    #up = propose_mixture(u, state.L, update_idx,
+    #                     small=proposal_small, big=proposal_big, p_big=proposal_p_big)
 
     # log-posterior at proposal
     lp_up = logposterior_u(up)

@@ -83,7 +83,7 @@ full_dataset = TimeSeriesInferenceDataset(ts, counts, dils, cutoff=300)
 prior, initial_guess = mcmc.make_prior_from_initial_guess(full_dataset, frac_error=0.5, device=device)
 infer_idx = None # all parameters will be auto-inferred if there's no specified subset
 # infer_idx = [0]  # Example: infer only colonization 
-ground_truth = torch.tensor([1/20, 0.25, 1e6, 0.2] device=device) 
+ground_truth = torch.tensor([1/20, 0.25, 1e6, 0.2], device=device) 
 
 # Overwrite non-inferred params with ground truth if they exist
 if infer_idx is not None:
