@@ -36,8 +36,9 @@ class TimeSeriesInferenceDataset():
         self.cutoff = cutoff
 
         # Now call REPOP on CPU
-        self.lpkdil_n = repop.get_lpkdil_n(self.counts, self.dils, self.n, 
-                                           cutoff, self.Nmax).to(self.device) 
+        self.lpkdil_n = repop.get_lpkdil_n(self.counts.cpu(), self.dils.cpu(), self.n.cpu(),
+                                        cutoff, self.Nmax).cpu()
+
         # Only here do we switch to the chosen device (GPU or CPU)
 
         # Move times and index to device after REPOP
@@ -68,7 +69,8 @@ class TimeSeriesInferenceDataset():
         lpkdil_list = []
         for index in range(len(dataset.times)):
             mask = (dataset.T_index == index).reshape(-1)
-            lpkdil_n = dataset.lpkdil_n[mask]
+            mask_cpu = mask.to("cpu")                 # CPU mask for indexing lpkdil_n (which is on CPU)
+            lpkdil_n = dataset.lpkdil_n[mask_cpu]    
 
             n_ind_full = ns[index].to(device=lpkdil_n.device, dtype=torch.long)
             M = n_ind_full.numel()
@@ -123,7 +125,7 @@ class TimeSeriesInferenceDataset():
         return torch.sum(log_probs)
 
 
-    def ode_initialization(self, init=None, cap_multiplier=1.5, iters=300, lr=0.03):
+    def ode_initialization(self, init=None, cap_multiplier=1.2, iters=300, lr=0.03):
         """
         Rough CPU ODE init for prior centering.
         Fix k to cap_multiplier * max observed reconstructed count.
@@ -170,7 +172,7 @@ class TimeSeriesInferenceDataset():
             opt.zero_grad()
 
             alpha = torch.exp(lalpha)
-            r     = torch.exp(lr_)          # r = mu - d
+            r     = torch.exp(lr_)          # r = mu - dFalse
             d     = torch.exp(ld)
             mu    = r + d
             k     = k_fixed

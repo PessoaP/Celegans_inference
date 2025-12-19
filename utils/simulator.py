@@ -223,23 +223,6 @@ def sample(params, E_initial=None, T=48, N=None,
     return t, E
 
 
-class ConstrainedLogNormalPrior:
-    def __init__(self, loc, scale):
-        self.base = torch.distributions.LogNormal(loc, scale)
-
-    def log_prob(self, x):
-        if x[1] < x[3]:
-            return torch.tensor(float('-inf'), device=x.device)
-        return self.base.log_prob(x).sum()
-
-    def sample(self):
-        for _ in range(1000):
-            x = self.base.sample().to(self.base.loc.device)
-            if x[1] >= x[3]:
-                return x
-        raise RuntimeError("Failed to sample satisfying x[1] >= x[3] after 100 attempts.")
-
-
 def integrate_mass_action(params, Ts, dt=0.1,device='cpu'):
     """
     Simulate ODE trajectories from E=0 using Euler method.

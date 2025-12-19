@@ -3,21 +3,29 @@ import torch
 import numpy as np
 
 # === Prior Construction from ODE Initialization (CPU) ===
-class ConstrainedLogNormalPrior:
+# class ConstrainedLogNormalPrior:  # old proposal that enforces mu >= d in the prior. Now done via reflection in u-space.
+#     def __init__(self, loc, scale):
+#         self.base = torch.distributions.LogNormal(loc, scale)
+
+#     def log_prob(self, x):
+#         if x[1] < x[3]:
+#             return torch.tensor(float('-inf'), device=x.device)
+#         return self.base.log_prob(x).sum()
+
+#     def sample(self):
+#         for _ in range(1000):
+#             x = self.base.sample().to(self.base.loc.device)
+#             if x[1] >= x[3]:
+#                 return x
+#         raise RuntimeError("Failed to sample satisfying x[1] >= x[3] after 100 attempts.")
+
+class LogNormalPrior:
     def __init__(self, loc, scale):
         self.base = torch.distributions.LogNormal(loc, scale)
-
     def log_prob(self, x):
-        if x[1] < x[3]:
-            return torch.tensor(float('-inf'), device=x.device)
         return self.base.log_prob(x).sum()
-
     def sample(self):
-        for _ in range(1000):
-            x = self.base.sample().to(self.base.loc.device)
-            if x[1] >= x[3]:
-                return x
-        raise RuntimeError("Failed to sample satisfying x[1] >= x[3] after 100 attempts.")
+        return self.base.sample()
 
 def make_prior_from_initial_guess(dataset, frac_error=0.5, device=None, min_logstd=1e-2):
     """
@@ -45,7 +53,7 @@ def make_prior_from_initial_guess(dataset, frac_error=0.5, device=None, min_logs
     # multiplicative std in log-space
     logstd = torch.log1p(frac_error).clamp_min(min_logstd)
 
-    prior = ConstrainedLogNormalPrior(logmean, logstd)
+    prior = LogNormalPrior(logmean, logstd)
     return prior, init_guess
 
 
@@ -124,42 +132,55 @@ def propose_mixture(u, L, update_idx=None, small=0.8, big=2.0, p_big=0.12):
     return block_proposal_u(u, L, update_idx, step_scale=step_scale)
 
 # === Better proposal to deal with intederminicy between replication and death rates ===
-def propose_full_with_pair_corrmix(u, L, step_scale=1.0, pair=(1, 3), rho=0.95, p_anticorr=0.5):
+def propose_full_with_pair_corrmix(
+    u, L, step_scale=1.0, pair=(1, 3), rho=0.95, p_anticorr=0.2
+):
     """
-    Full random-walk proposal in u-space, but force (u[i], u[j]) to be proposed
-    from a mixture of correlated (+rho) and anticorrelated (-rho) 2D Gaussians.
+    Full RW proposal in u-space:
+        u' = u + step_scale * L @ z
+    where z ~ N(0, I) except that (z[i], z[j]) are drawn from a mixture of
+    correlated (+rho) and anticorrelated (-rho) 2D normals.
 
-    L: Cholesky for proposal covariance in u-space (d,d)
+    This preserves *all* cross-covariances from L
+    Symmetric proposal => standard MH accept rule is valid.
     """
-    # baseline full proposal increment
-    z = torch.randn_like(u)
-    du = (L * step_scale) @ z
-
-    i, j = pair
     device, dtype = u.device, u.dtype
+    d = u.numel()
+    i, j = pair
 
-    # Use marginal scales from L (diagonal) for the pair
-    si = torch.clamp(L[i, i].to(dtype), min=torch.tensor(1e-12, device=device, dtype=dtype))
-    sj = torch.clamp(L[j, j].to(dtype), min=torch.tensor(1e-12, device=device, dtype=dtype))
+    # Base noise
+    z = torch.randn(d, device=device, dtype=dtype)
 
-    # choose correlated (+) or anticorrelated (-)
+    # Choose +rho or -rho
     sign = -1.0 if (torch.rand((), device=device) < p_anticorr) else 1.0
     r = sign * rho
 
-    # 2D correlated standard normal via Cholesky of [[1, r],[r,1]]
-    # then scale by (si, sj)
-    L2 = torch.tensor([[1.0, 0.0],
-                       [r, float(np.sqrt(max(1e-12, 1.0 - float(r*r))))]],
-                      device=device, dtype=dtype)
+    # Clamp r for numerical stability
+    r = torch.clamp(torch.as_tensor(r, device=device, dtype=dtype),
+                    min=-0.999999, max=0.999999)
 
-    z2 = torch.randn(2, device=device, dtype=dtype)
-    eps2 = L2 @ z2  # ~ N(0, [[1,r],[r,1]])
+    # Draw correlated pair:
+    # Let a ~ N(0,1), b ~ N(0,1). Then:
+    #   z_i = a
+    #   z_j = r*a + sqrt(1-r^2)*b
+    a = torch.randn((), device=device, dtype=dtype)
+    b = torch.randn((), device=device, dtype=dtype)
+    s = torch.sqrt(torch.clamp(1.0 - r*r, min=torch.as_tensor(1e-12, device=device, dtype=dtype)))
 
-    du[i] = si * eps2[0] * step_scale
-    du[j] = sj * eps2[1] * step_scale
+    z[i] = a
+    z[j] = r * a + s * b
 
+    du = (L @ z) * step_scale
     return u + du
 
+# === Enforcing mu > d ===
+def reflect_mu_ge_d_in_u(up, i=1, j=3):
+    if up[i] < up[j]:
+        t = 0.5 * (up[i] + up[j])
+        up = up.clone()
+        up[i] = 2*t - up[i]
+        up[j] = 2*t - up[j]
+    return up
 
 # === Adapt in u-space ===
 def adapt_covariance_u(u_history,
@@ -191,7 +212,10 @@ def adapt_covariance_u(u_history,
     # --- compute per-dim std on the finite part (fallback to fill_std)
     with torch.no_grad():
         mu = uh.mean(dim=0)
-        sd = uh.std(dim=0, unbiased=True)
+        if uh.shape[0] < 2:
+            sd = torch.full((d,), fill_std, device=device)
+        else:
+            sd = uh.std(dim=0, unbiased=True)
         sd = torch.where(torch.isfinite(sd), sd, torch.zeros_like(sd))
         sd = torch.clamp(sd, min=fill_std)
 
@@ -206,7 +230,7 @@ def adapt_covariance_u(u_history,
     cov = torch.cov(uh64.T)  # (d,d), unbiased N-1 normalization
     cov = 0.5 * (cov + cov.T)  # symmetrize
 
-    scaling = (2.4 ** 2) / float(d)
+    scaling = (2.4 ** 2) / float(d)  
 
     diag_cov = torch.diag(cov)
     med = torch.median(torch.clamp(diag_cov, min=1e-16)).item()
@@ -278,16 +302,30 @@ def next_MCMC_sample_u(logposterior_u, u, lp_u, state,
         step_scale=step_scale,
         pair=(1, 3),
         rho=0.95,
-        p_anticorr=0.5,   # tune this; often 0.1–0.3 is better than 0.5
+        p_anticorr=0.2,   # tune this
     )
 
+    # old mixture proposal (without pair correlation)
     #up = propose_mixture(u, state.L, update_idx,
     #                     small=proposal_small, big=proposal_big, p_big=proposal_p_big)
+
+    #up = reflect_mu_ge_d_in_u(up, i=1, j=3) # enforce mu >= d
+    was_reflected = (up[1] < up[3]).item()
+    up = reflect_mu_ge_d_in_u(up, 1, 3)
+
+    # # ---- DEBUG: proposal magnitude ----
+    # du = up - u
+    # print("||du|| =", float(torch.norm(du)))
+    # print("du =", du.detach().cpu().numpy())
+    # # ----------------------------------
 
     # log-posterior at proposal
     lp_up = logposterior_u(up)
     if not torch.isfinite(lp_up):
         return u, lp_u, state, False
+
+    # dlogp = float(lp_up - lp_u)
+    # print("reflected?", was_reflected, "dlogp:", dlogp) # checking to see if the reflection helps
 
     # accept / reject
     if greedy:

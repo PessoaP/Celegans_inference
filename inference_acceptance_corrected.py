@@ -97,14 +97,13 @@ init_L = 1e-3 * torch.diag(torch.tensor((1, 1, 1, 5), device=device))
 logposterior_u = mcmc.make_logposterior_u(full_dataset, prior) # the posterior in u = log(θ) space
 u = mcmc.to_u(initial_guess)           # carry state in u
 lp_u = logposterior_u(u)
-state = mcmc.SamplerState(L=init_L)  
-
+state = mcmc.SamplerState(L=init_L)
 
 # === MCMC Settings ===
-n_burn1 = 100
-n_burn2 = 200
-n_mcmc  = 1000
-sample_window = 100
+n_burn1 = 0  # greedy phase
+n_burn2 = 0 # adaptive phase
+n_mcmc  = 100 # used for building posterior
+sample_window = 100  # how many past samples to use for adaptation
 total_steps = n_burn1 + n_burn2 + n_mcmc
 
 dim = initial_guess.shape[0]
