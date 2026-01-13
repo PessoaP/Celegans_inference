@@ -82,7 +82,8 @@ full_dataset = TimeSeriesInferenceDataset(ts, counts, dils, cutoff=300)
 # === ODE Initialization for prior/initial guess ===
 prior, initial_guess = mcmc.make_prior_from_initial_guess(full_dataset, frac_error=0.5, device=device)
 infer_idx = None # all parameters will be auto-inferred if there's no specified subset
-# infer_idx = [0]  # Example: infer only colonization 
+#infer_idx = [0]  # Example: infer only colonization -- need to change away from using block_proposals in mcmc.py if using this
+infer_idx = [] # Test that mcmc doesn't drfit from ground truth when no params are inferred
 ground_truth = torch.tensor([1/20, 0.25, 1e6, 0.2], device=device) 
 
 # Overwrite non-inferred params with ground truth if they exist
@@ -102,7 +103,7 @@ state = mcmc.SamplerState(L=init_L)
 # === MCMC Settings ===
 n_burn1 = 0  # greedy phase
 n_burn2 = 0 # adaptive phase
-n_mcmc  = 100 # used for building posterior
+n_mcmc  = 1000 # used for building posterior
 sample_window = 100  # how many past samples to use for adaptation
 total_steps = n_burn1 + n_burn2 + n_mcmc
 
@@ -136,7 +137,7 @@ start_step  = 0
 if True:
     state = mcmc.SamplerState(L=init_L)
     actual_n_burn1 = n_burn1
-    log(f"ODE guess, with fixed params set to GT: {initial_guess.cpu().numpy()}")
+    log(f"Initialization guess, with fixed params set to GT: {initial_guess.cpu().numpy()}")
 
 
 # === Main MCMC Loop ===

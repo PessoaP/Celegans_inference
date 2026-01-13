@@ -30,13 +30,25 @@ class SyntheticSimulator:
         T_batch = Ts.repeat_interleave(size) * 24  # Convert days to hours
         n_sam = self.sample_n(size=T_batch.numel(), T=T_batch).cpu()
 
-        # Serial dilution steps (vectorized)
-        n1 = torch.distributions.Binomial(total_count=n_sam.float(), probs=10/200).sample()
-        n2 = torch.distributions.Binomial(total_count=n1.float(), probs=10/100).sample()
-        n3 = torch.distributions.Binomial(total_count=n2.float(), probs=10/100).sample()
-        c1 = torch.distributions.Binomial(total_count=n1.float(), probs=90/100).sample()
-        c2 = torch.distributions.Binomial(total_count=n2.float(), probs=90/100).sample()
-        c3 = torch.distributions.Binomial(total_count=n3.float(), probs=90/100).sample()
+        # Serial dilution steps
+        # Start with true bacteria count per worm/timepoint in the 200 µL homogenate
+        n0 = n_sam.float()
+
+        # Step 0: take 10 µL out of 200 µL homogenate into tube 1 (then add 90 µL diluent)
+        # bacteria in tube 1 before plating/transfer
+        tube1 = torch.distributions.Binomial(total_count=n0, probs=10/200).sample()
+
+        # Tube 1: partition 100 µL into 10 µL transfer + 90 µL plated
+        tube2 = torch.distributions.Binomial(total_count=tube1, probs=10/100).sample()
+        c1    = tube1 - tube2  # plated from tube 1 (90 µL)
+
+        # Tube 2: again partition into 10 µL transfer + 90 µL plated
+        tube3 = torch.distributions.Binomial(total_count=tube2, probs=10/100).sample()
+        c2    = tube2 - tube3  # plated from tube 2
+
+        # Tube 3: again partition
+        tube4 = torch.distributions.Binomial(total_count=tube3, probs=10/100).sample()
+        c3    = tube3 - tube4  # plated from tube 3
 
         n_timepoints = len(Ts)
         df = pd.DataFrame({

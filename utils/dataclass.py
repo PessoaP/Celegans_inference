@@ -125,6 +125,68 @@ class TimeSeriesInferenceDataset():
         return torch.sum(log_probs)
 
 
+    def log_uniform(shape, low, high, device=None, dtype=torch.float32):
+        """
+        Sample x ~ LogUnif(low, high) elementwise.
+        low/high must be > 0.
+        """
+        low  = float(low)
+        high = float(high)
+        u = torch.rand(shape, device=device, dtype=dtype)
+        return torch.exp(math.log(low) + (math.log(high) - math.log(low)) * u)
+
+    def prior_initialization(self, init=None, rng=None,
+                            alpha_range=(1e-4, 1.0),   # per hour
+                            mu_range=(1e-4, 2.0),      # per hour
+                            d_range=(1e-4, 2.0),       # per hour
+                            k_range=None,              # set from data if None
+                            k_multiplier_range=(1.0, 1e3),
+                            require_mu_gt_d=True):
+        """
+        Initialize theta from a (log-)uniform prior rather than ODE fitting.
+        Returns theta = [alpha, mu, k, d] on self.device.
+        """
+
+        device = self.device
+        dtype  = torch.float32
+
+        # If user provides init, just return it.
+        if init is not None:
+            init = init.detach().to(device=device, dtype=dtype)
+            return init
+
+        # data-driven scale for k, but NOT fixed: just sets a plausible range
+        target = (self.counts * self.dils).detach().to(device='cpu', dtype=dtype).reshape(-1)
+        max_obs = float(target.max().clamp_min(1.0).item())
+
+        if k_range is None:
+            # Let k float widely around max observed.
+            # k in [max_obs * m_low, max_obs * m_high]
+            m_low, m_high = k_multiplier_range
+            k_low  = max_obs * float(m_low)
+            k_high = max_obs * float(m_high)
+        else:
+            k_low, k_high = k_range
+
+        # sample parameters
+        alpha = log_uniform((), alpha_range[0], alpha_range[1], device=device, dtype=dtype)
+        mu    = log_uniform((), mu_range[0],    mu_range[1],    device=device, dtype=dtype)
+        d     = log_uniform((), d_range[0],     d_range[1],     device=device, dtype=dtype)
+        k     = log_uniform((), k_low,          k_high,         device=device, dtype=dtype)
+
+        if require_mu_gt_d:
+            # enforce mu > d without weird truncation artifacts: resample d a few times
+            for _ in range(10):
+                if (mu > d).item():
+                    break
+                d = log_uniform((), d_range[0], d_range[1], device=device, dtype=dtype)
+            # last resort: clamp
+            d = torch.minimum(d, mu * 0.99)
+
+        theta = torch.stack([alpha, mu, k, d])
+        return theta
+
+
     def ode_initialization(self, init=None, cap_multiplier=1.2, iters=300, lr=0.03):
         """
         Rough CPU ODE init for prior centering.

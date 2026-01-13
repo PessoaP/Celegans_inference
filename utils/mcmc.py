@@ -36,7 +36,7 @@ def make_prior_from_initial_guess(dataset, frac_error=0.5, device=None, min_logs
     # fixed default on CPU for deterministic ODE init
     default_guess = torch.tensor([1/20, 1/4, 2e5, 0.1], dtype=torch.float32, device='cpu')
 
-    # ODE init from a fixed point (no randomness)
+    # Init from a fixed point (no randomness)
     init_guess = dataset.ode_initialization(default_guess).detach()
     init_guess = torch.clamp(init_guess, min=1e-12)
 

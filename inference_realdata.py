@@ -51,7 +51,7 @@ dils = torch.as_tensor(df["Dilution"].values, dtype=torch.float64) # dilution fa
 full_dataset = TimeSeriesInferenceDataset(ts, counts, dils, cutoff=300)
 
 
-# === ODE Initialization for prior/initial guess ===
+# === Initialization for prior/initial guess ===
 prior, initial_guess = mcmc.make_prior_from_initial_guess(full_dataset, frac_error=[0.8, 0.8, 1.5, 0.8], device=device) # loosen prior parameter to avoid sticking
 infer_idx = None # all parameters will be auto-inferred if there's no specified subset
 # infer_idx = [0]  # Example: infer only colonization 
@@ -139,8 +139,8 @@ def plot_intermediate_histograms(samples, step, output_dir, n_burn1, n_burn2):
             ax[i].text(unique_vals[0], 0.5, 'All samples identical', ha='center', va='center', color='red')
         ax[i].set_xlabel(xlabels[i])
         
-        # Overlay initial ODE guess as dotted vertical line
-        ax[i].axvline(float(initial_guess[i]), color='k', linestyle=':', linewidth=2, label='ODE initial guess')
+        # Overlay initial guess as dotted vertical line
+        ax[i].axvline(float(initial_guess[i]), color='k', linestyle=':', linewidth=2, label='initial guess')
     
     fig.suptitle(f"{phase.capitalize()} Histograms up to Step {step}", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.95])

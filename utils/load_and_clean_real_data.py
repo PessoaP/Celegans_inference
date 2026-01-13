@@ -66,6 +66,11 @@ def load_and_clean_real_data(filepath, cutoff=300, verbose=True, save_dir=None):
     kept = total - dropped
     df_result.dropna(subset=["Counts", "Dilution"], inplace=True)
 
+    df_result["Counts"] = df_result["Counts"].astype(np.float32)
+    df_result["Dilution"] = df_result["Dilution"].astype(np.float32)
+    df_result["Day"] = df_result["Day"].astype(np.int64)
+
+
     if verbose:
         print(f"[INFO] Loaded {total} rows from {filepath}")
         print(f"[INFO] Retained {kept} rows with valid CFU entries.")
