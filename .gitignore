@@ -1,2 +1,5 @@
 inference_outputs/
 __pycache__/
+records_*/
+inference_driver.py
+tests/

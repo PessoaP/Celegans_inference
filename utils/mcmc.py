@@ -3,21 +3,6 @@ import torch
 import numpy as np
 
 # === Prior Construction from ODE Initialization (CPU) ===
-# class ConstrainedLogNormalPrior:  # old proposal that enforces mu >= d in the prior. Now done via reflection in u-space.
-#     def __init__(self, loc, scale):
-#         self.base = torch.distributions.LogNormal(loc, scale)
-
-#     def log_prob(self, x):
-#         if x[1] < x[3]:
-#             return torch.tensor(float('-inf'), device=x.device)
-#         return self.base.log_prob(x).sum()
-
-#     def sample(self):
-#         for _ in range(1000):
-#             x = self.base.sample().to(self.base.loc.device)
-#             if x[1] >= x[3]:
-#                 return x
-#         raise RuntimeError("Failed to sample satisfying x[1] >= x[3] after 100 attempts.")
 
 class LogNormalPrior:
     def __init__(self, loc, scale):
@@ -28,31 +13,31 @@ class LogNormalPrior:
         return self.base.sample()
 
 def make_prior_from_initial_guess(dataset, frac_error=0.5, device=None, min_logstd=1e-2):
-    """
-    Build a lognormal prior around the ODE initialization.
-    - frac_error: scalar or length-4 iterable. Interpreted as multiplicative std: logstd = log(1 + frac_error).
-    - min_logstd: small floor to avoid over-tight priors.
-    """
-    # fixed default on CPU for deterministic ODE init
     default_guess = torch.tensor([1/20, 1/4, 2e5, 0.1], dtype=torch.float32, device='cpu')
 
-    # Init from a fixed point (no randomness)
-    init_guess = dataset.ode_initialization(default_guess).detach()
-    init_guess = torch.clamp(init_guess, min=1e-12)
+    init_phys = dataset.ode_initialization(default_guess).detach()
+    init_phys = torch.clamp(init_phys, min=1e-12)
+
+    # Expect init_phys = (alpha, mu, k, d) or (alpha, mu, d)
+    alpha0 = init_phys[0]
+    mu0    = init_phys[1]
+    d0     = init_phys[-1]   # if 4 params, last is d; if 3 params, last is d
+
+    r0 = torch.clamp(mu0 - d0, min=1e-12)
+    qm1_0 = torch.clamp(d0 / r0, min=1e-12)   # q-1 = d/r
+
+    init_guess = torch.stack([alpha0, r0, qm1_0])
 
     if device is not None:
         init_guess = init_guess.to(device)
 
     logmean = torch.log(init_guess)
 
-    # allow scalar or per-parameter values
     if np.isscalar(frac_error):
         frac_error = [float(frac_error)] * logmean.numel()
     frac_error = torch.as_tensor(frac_error, dtype=logmean.dtype, device=logmean.device)
 
-    # multiplicative std in log-space
     logstd = torch.log1p(frac_error).clamp_min(min_logstd)
-
     prior = LogNormalPrior(logmean, logstd)
     return prior, init_guess
 
@@ -72,27 +57,35 @@ def logabsdet_J_exp(u):
 # === Target in u-space (posterior ∘ exp + Jacobian) ===
 def make_logposterior_u(data, prior, debug=False):
     def logposterior_u(u):
-        theta = to_theta(u)                      # positivity
+        theta = to_theta(u)  # theta = (alpha, r, qm1)
         if torch.any(theta <= 0) or torch.any(~torch.isfinite(theta)):
             return torch.tensor(-float('inf'), device=u.device)
 
-        lp = prior.log_prob(theta)         # prior in θ-space
-        ll = data.loglike(theta)           # likelihood at θ(u)
-        jac = logabsdet_J_exp(u)           # Jacobian for θ = exp(u)
-        
+        # prior on (alpha, r, qm1)
+        lp = prior.log_prob(theta)
+
+        # map to physical (alpha, mu, d) for simulator/likelihood
+        alpha, r, qm1 = theta
+        q  = 1.0 + qm1
+        mu = r * (q / (q - 1.0))
+        d  = r * (1.0 / (q - 1.0))
+        theta_phys = torch.stack([alpha, mu, d])
+
+        ll = data.loglike(theta_phys)
+
+        jac = logabsdet_J_exp(u)  # still sum(u)
+
         if debug:
-            print("theta:", theta.detach().cpu().numpy())
-            print("  lp (prior):", float(lp))
-            print("  ll (likelihood):", float(ll))
-            print("  jacobian:", float(jac))
-            print("  total:", float(lp + ll + jac))
-            print("-" * 40)
+            print("theta_infer (alpha,r,qm1):", theta.detach().cpu().numpy())
+            print("theta_phys (alpha,mu,d):", theta_phys.detach().cpu().numpy())
+            print("lp:", float(lp), "ll:", float(ll), "jac:", float(jac))
 
         if not torch.isfinite(lp) or not torch.isfinite(ll):
             return torch.tensor(-float('inf'), device=u.device)
 
         return lp + ll + jac
     return logposterior_u
+
 
 
 # === Proposals in u-space (full & block) with step scaling ===
@@ -130,57 +123,6 @@ def propose_mixture(u, L, update_idx=None, small=0.8, big=2.0, p_big=0.12):
     """
     step_scale = big if (torch.rand((), device=u.device) < p_big) else small
     return block_proposal_u(u, L, update_idx, step_scale=step_scale)
-
-# === Better proposal to deal with intederminicy between replication and death rates ===
-def propose_full_with_pair_corrmix(
-    u, L, step_scale=1.0, pair=(1, 3), rho=0.95, p_anticorr=0.2
-):
-    """
-    Full RW proposal in u-space:
-        u' = u + step_scale * L @ z
-    where z ~ N(0, I) except that (z[i], z[j]) are drawn from a mixture of
-    correlated (+rho) and anticorrelated (-rho) 2D normals.
-
-    This preserves *all* cross-covariances from L
-    Symmetric proposal => standard MH accept rule is valid.
-    """
-    device, dtype = u.device, u.dtype
-    d = u.numel()
-    i, j = pair
-
-    # Base noise
-    z = torch.randn(d, device=device, dtype=dtype)
-
-    # Choose +rho or -rho
-    sign = -1.0 if (torch.rand((), device=device) < p_anticorr) else 1.0
-    r = sign * rho
-
-    # Clamp r for numerical stability
-    r = torch.clamp(torch.as_tensor(r, device=device, dtype=dtype),
-                    min=-0.999999, max=0.999999)
-
-    # Draw correlated pair:
-    # Let a ~ N(0,1), b ~ N(0,1). Then:
-    #   z_i = a
-    #   z_j = r*a + sqrt(1-r^2)*b
-    a = torch.randn((), device=device, dtype=dtype)
-    b = torch.randn((), device=device, dtype=dtype)
-    s = torch.sqrt(torch.clamp(1.0 - r*r, min=torch.as_tensor(1e-12, device=device, dtype=dtype)))
-
-    z[i] = a
-    z[j] = r * a + s * b
-
-    du = (L @ z) * step_scale
-    return u + du
-
-# === Enforcing mu > d ===
-def reflect_mu_ge_d_in_u(up, i=1, j=3):
-    if up[i] < up[j]:
-        t = 0.5 * (up[i] + up[j])
-        up = up.clone()
-        up[i] = 2*t - up[i]
-        up[j] = 2*t - up[j]
-    return up
 
 # === Adapt in u-space ===
 def adapt_covariance_u(u_history,
@@ -289,43 +231,16 @@ def next_MCMC_sample_u(logposterior_u, u, lp_u, state,
     if adapt and (u_history is not None):
         state.L = adapt_covariance_u(u_history, output_dir=output_dir)
 
-    # align L to u
     state.L = state.L.to(dtype=u.dtype, device=u.device)
 
-    # propose (coordinate or full) with a small/large mixture and also pair-correlated jumps
-    # choose mixture-of-scales step size 
-    step_scale = proposal_big if (torch.rand((), device=u.device) < proposal_p_big) else proposal_small
-
-    up = propose_full_with_pair_corrmix(
-        u=u,
-        L=state.L,
-        step_scale=step_scale,
-        pair=(1, 3),
-        rho=0.95,
-        p_anticorr=0.2,   # tune this
-    )
-
-    # old mixture proposal (without pair correlation)
-    #up = propose_mixture(u, state.L, update_idx,
-    #                     small=proposal_small, big=proposal_big, p_big=proposal_p_big)
-
-    #up = reflect_mu_ge_d_in_u(up, i=1, j=3) # enforce mu >= d
-    was_reflected = (up[1] < up[3]).item()
-    up = reflect_mu_ge_d_in_u(up, 1, 3)
-
-    # # ---- DEBUG: proposal magnitude ----
-    # du = up - u
-    # print("||du|| =", float(torch.norm(du)))
-    # print("du =", du.detach().cpu().numpy())
-    # # ----------------------------------
+    # propose
+    up = propose_mixture(u, state.L, update_idx=update_idx,
+                        small=proposal_small, big=proposal_big, p_big=proposal_p_big)
 
     # log-posterior at proposal
     lp_up = logposterior_u(up)
     if not torch.isfinite(lp_up):
         return u, lp_u, state, False
-
-    # dlogp = float(lp_up - lp_u)
-    # print("reflected?", was_reflected, "dlogp:", dlogp) # checking to see if the reflection helps
 
     # accept / reject
     if greedy:

@@ -28,6 +28,8 @@ import torch
 
 # Reaction stoichiometry vector
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# NOTE: S is created on the default compute device.
+# This file assumes all stochastic simulation is run on that same device.
 S = torch.tensor((1, 1, -1, -1),device=device).int()
 
 def get_rates(E, params):
@@ -221,6 +223,38 @@ def sample(params, E_initial=None, T=48, N=None,
         
 
     return t, E
+
+def sample_record(params, record_times, N, E_initial=None,
+                  device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
+    params = params.to(device)
+
+    if not isinstance(record_times, torch.Tensor):
+        record_times = torch.tensor(record_times, device=device, dtype=torch.float32)
+    else:
+        record_times = record_times.to(device=device, dtype=torch.float32)
+
+    record_times = record_times.reshape(-1)
+    record_times, _ = torch.sort(record_times)
+
+    if params.dim() == 1:
+        params = params.unsqueeze(-1).repeat(1, N)
+    elif params.shape != (4, N):
+        raise ValueError(f"Expected params shape (4,{N}), got {tuple(params.shape)}")
+
+    t = torch.zeros(N, device=device, dtype=torch.float32)
+    if E_initial is None:
+        E = torch.zeros(N, device=device, dtype=torch.int32)
+    else:
+        E = E_initial.to(device=device).to(torch.int32)
+
+    snapshots = []
+    for T_next in record_times:
+        Tvec = torch.full_like(t, T_next)
+        while torch.any(t < Tvec):
+            t, E = step(params, E, t, Tvec)
+        snapshots.append(E.clone())
+
+    return snapshots
 
 
 def integrate_mass_action(params, Ts, dt=0.1,device='cpu'):

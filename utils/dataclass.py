@@ -3,20 +3,22 @@ import repop
 from utils import simulator
 from tqdm import tqdm
 
-def simulate_for_likelihood(params, times, Nsamples=2**15):
-    """Simulate population trajectories up to each time in `times`."""
-    
-    times = times.to(params.device)
-    t,E = simulator.sample(params, N=Nsamples, T=times[0])
-    simulations = [E.int()]
-    for T in times[1:]:
-        delta_t, E = simulator.sample(params, E_initial=1*E, N=Nsamples, T=T-t)
-        t += delta_t
-        simulations.append(E.int())
-    return simulations
+
+def simulate_for_likelihood(params, times):
+    """
+    Simulate ONCE up to max(times) and record E snapshots at each requested time.
+    """
+    N = int(params.shape[1])  # number of worms simulated
+
+    device = params.device
+    times = times.to(device).reshape(-1)
+    times = torch.sort(times).values  # optional but safe
+
+    return simulator.sample_record(params=params, record_times=times, N=N, device=device)
+
 
 class TimeSeriesInferenceDataset():
-    def __init__(self, ts, counts, dils, cutoff=300, 
+    def __init__(self, ts, counts, dils, kappa_samples, cutoff=300, 
                  device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
         self.device = device
         
@@ -28,6 +30,11 @@ class TimeSeriesInferenceDataset():
         self.counts = to_device_tensor(counts)
         self.dils   = to_device_tensor(dils)
         self.Ts     = to_device_tensor(ts)
+
+        # --- Store fixed capacity samples (Day-9 learned) ---
+        if not isinstance(kappa_samples, torch.Tensor):
+            kappa_samples = torch.tensor(kappa_samples)
+        self.kappa_samples = kappa_samples.to(self.device).reshape(-1).float()  # each individual worm's capacity for simulations
 
         self.Nmax = int(2 * (self.counts * self.dils).max().item() + 1)
         self.n = torch.arange(self.Nmax, device=device)
@@ -83,7 +90,7 @@ class TimeSeriesInferenceDataset():
                     f"Max n in ns = {int(n_ind_full.max())}, Nmax = {lpkdil_n.shape[-1]}."
                 )
 
-            # lpkdil_ns now has shape (ndata_at_time, M)
+            # Allocate (ndata_at_time, M)
             lpkdil_ns = torch.full(
                 (lpkdil_n.shape[0], M),
                 -torch.inf,
@@ -107,98 +114,78 @@ class TimeSeriesInferenceDataset():
             return torch.cat(lpkdil_list, dim=0)
         else:   
             return lpkdil_list
-
-    def loglike(self, value, Nsamples=2**15):
+    
+    def _build_params_with_capacity(self, theta_phys):
         """
-        Simulate `ns` using current times and compute total log-likelihood (log-sum over samples).
+        Build per-trajectory parameter matrix with fixed per-worm capacity samples.
 
         Args:
-            value: parameters to pass to simulator
-            Nsamples: number of samples per timepoint
+            theta_phys: torch.Tensor shape (3,) = [alpha, mu, d]   (NO k here)
+
+        Requires:
+            self.kappa_samples is a torch.Tensor of shape (Nsamples,)
+            (already drawn via stratified sampling)
+        Returns:
+            params: torch.Tensor shape (4, Nsamples) in simulator order [alpha, mu, k, d]
+        """
+        # --- Check theta is presented properly ---
+        theta_phys = theta_phys.to(self.device).float().reshape(-1)
+        if theta_phys.numel() != 3:
+            raise ValueError(f"theta_phys must have 3 entries [alpha, mu, d]; got shape {tuple(theta_phys.shape)}")
+
+        alpha, mu, d = theta_phys[0], theta_phys[1], theta_phys[2]
+        k_vec = self.kappa_samples.to(self.device).float().reshape(-1)  # vector of capacities must be loaded in self.kappa_samples
+        Nsamples = k_vec.numel() # Nsamples: number of trajectories ("worms")
+
+        # --- broadcast kinetics to (Nsamples,) ---
+        alpha_vec = alpha.expand(Nsamples)
+        mu_vec    = mu.expand(Nsamples)
+        d_vec     = d.expand(Nsamples)
+
+        # --- assemble (4, Nsamples) ---
+        params = torch.stack([alpha_vec, mu_vec, k_vec, d_vec], dim=0)
+        return params
+
+
+    def loglike(self, theta_phys):
+        """
+        Args:
+            theta_phys: torch.Tensor shape (3,) = [alpha, mu, d]
+                (kinetics only; capacity samples are fixed in self.kappa_samples)
+
+        Requires:
+            self.kappa_samples: torch.Tensor shape (Nsamples,)
+            self.times: torch.Tensor shape (n_times,)
 
         Returns:
-            Scalar log-likelihood estimate via log-sum-exp over ns.
+            Scalar log-likelihood estimate
         """
-        ns = simulate_for_likelihood(value, self.times, Nsamples)
-        self.last_simulated_ns = ns  # so we can save the summary statistics of the trajectories later
-        log_probs = self.lpkdil_ns(ns, reduce=True, concat=True)
+        # --- sanitize theta ---
+        theta_phys = theta_phys.to(self.device).float().reshape(-1)
+        if theta_phys.numel() != 3:
+            raise ValueError(f"theta_phys must have 3 entries [alpha, mu, d]; got shape {tuple(theta_phys.shape)}")
+
+        # --- build per-worm params (4, Nsamples) using fixed kappa samples ---
+        params = self._build_params_with_capacity(theta_phys)  # (4, Nsamples)
+        Nsamples = params.shape[1]
+
+        # --- simulate trajectories ---
+        ns = simulate_for_likelihood(params, self.times) 
+        self.last_simulated_ns = ns
+
+        # --- score simulated ns against observed plate-count+dilution data ---
+        log_probs = self.lpkdil_ns(ns, reduce=True, concat=True) # Does the calculation (logmeanexp / logsumexp - log N).
+
         return torch.sum(log_probs)
 
 
-    def log_uniform(shape, low, high, device=None, dtype=torch.float32):
+
+    def ode_initialization(self, init=None, iters=300, lr=0.03):
         """
-        Sample x ~ LogUnif(low, high) elementwise.
-        low/high must be > 0.
+        Rough CPU ODE init for prior centering. Returns (alpha, mu, d).
         """
-        low  = float(low)
-        high = float(high)
-        u = torch.rand(shape, device=device, dtype=dtype)
-        return torch.exp(math.log(low) + (math.log(high) - math.log(low)) * u)
-
-    def prior_initialization(self, init=None, rng=None,
-                            alpha_range=(1e-4, 1.0),   # per hour
-                            mu_range=(1e-4, 2.0),      # per hour
-                            d_range=(1e-4, 2.0),       # per hour
-                            k_range=None,              # set from data if None
-                            k_multiplier_range=(1.0, 1e3),
-                            require_mu_gt_d=True):
-        """
-        Initialize theta from a (log-)uniform prior rather than ODE fitting.
-        Returns theta = [alpha, mu, k, d] on self.device.
-        """
-
-        device = self.device
-        dtype  = torch.float32
-
-        # If user provides init, just return it.
-        if init is not None:
-            init = init.detach().to(device=device, dtype=dtype)
-            return init
-
-        # data-driven scale for k, but NOT fixed: just sets a plausible range
-        target = (self.counts * self.dils).detach().to(device='cpu', dtype=dtype).reshape(-1)
-        max_obs = float(target.max().clamp_min(1.0).item())
-
-        if k_range is None:
-            # Let k float widely around max observed.
-            # k in [max_obs * m_low, max_obs * m_high]
-            m_low, m_high = k_multiplier_range
-            k_low  = max_obs * float(m_low)
-            k_high = max_obs * float(m_high)
-        else:
-            k_low, k_high = k_range
-
-        # sample parameters
-        alpha = log_uniform((), alpha_range[0], alpha_range[1], device=device, dtype=dtype)
-        mu    = log_uniform((), mu_range[0],    mu_range[1],    device=device, dtype=dtype)
-        d     = log_uniform((), d_range[0],     d_range[1],     device=device, dtype=dtype)
-        k     = log_uniform((), k_low,          k_high,         device=device, dtype=dtype)
-
-        if require_mu_gt_d:
-            # enforce mu > d without weird truncation artifacts: resample d a few times
-            for _ in range(10):
-                if (mu > d).item():
-                    break
-                d = log_uniform((), d_range[0], d_range[1], device=device, dtype=dtype)
-            # last resort: clamp
-            d = torch.minimum(d, mu * 0.99)
-
-        theta = torch.stack([alpha, mu, k, d])
-        return theta
-
-
-    def ode_initialization(self, init=None, cap_multiplier=1.2, iters=300, lr=0.03):
-        """
-        Rough CPU ODE init for prior centering.
-        Fix k to cap_multiplier * max observed reconstructed count.
-        Fit alpha, r=(mu-d), and d with r>0, d>0. Then mu = r + d.
-        """
-        # --- CPU data
         target = (self.counts * self.dils).detach().cpu().float().reshape(-1)
         Ts     = self.Ts.detach().cpu().float().reshape(-1)
-
-        # --- fixed capacity
-        k_fixed = (cap_multiplier * target.max()).clamp_min(1.0)
 
         # --- initial guesses
         if init is None:
@@ -209,7 +196,7 @@ class TimeSeriesInferenceDataset():
             init = init.detach().cpu().float()
             alpha0 = init[0]
             mu0    = init[1]
-            d0     = init[3]
+            d0     = init[2]
             r0     = (mu0 - d0).clamp_min(1e-3)
 
         # optimize in log space for positivity
@@ -225,23 +212,23 @@ class TimeSeriesInferenceDataset():
         w = (Ts / tmax) ** 2
         w = w / w.mean().clamp_min(1e-12)
 
-        eps = 1.0  # floor for n_ode in reconstruction scale
+        eps = 1.0 
 
         best = None
         best_loss = float("inf")
 
-        for it in tqdm(range(iters), desc="ODE init (k fixed)", leave=False):
+        k_fixed = torch.median(self.kappa_samples.detach().cpu()).clamp_min(1.0)
+
+        for it in tqdm(range(iters), desc="ODE init", leave=False):
             opt.zero_grad()
 
             alpha = torch.exp(lalpha)
-            r     = torch.exp(lr_)          # r = mu - dFalse
+            r     = torch.exp(lr_)          # r = mu - d
             d     = torch.exp(ld)
             mu    = r + d
-            k     = k_fixed
 
-            theta = torch.stack([alpha, mu, k, d])  # (4,)
-
-            n_ode = simulator.integrate_mass_action(theta, Ts, dt=0.1, device='cpu').reshape(-1)
+            theta_ode = torch.stack([alpha, mu, k_fixed, d])  # (4,)
+            n_ode = simulator.integrate_mass_action(theta_ode, Ts, dt=0.1, device='cpu').reshape(-1)
             n_ode = n_ode.clamp_min(eps)
 
             # relative error, weighted toward later times
@@ -254,80 +241,10 @@ class TimeSeriesInferenceDataset():
 
                 if loss.item() < best_loss:
                     best_loss = loss.item()
-                    best = theta.detach().clone()
+                    best = torch.stack([alpha, mu, d]).detach().clone()
 
         if best is None:
-            best = torch.stack([alpha.detach(), (r+d).detach(), k_fixed.detach(), d.detach()])
+            best = torch.stack([alpha.detach(), (r+d).detach(), d.detach()])
 
         return best.to(self.device)
 
-
-   
-
-# Old ODE initialization method (disabled)
-    # def ode_initialization(self, init=None):
-    #     """
-    #     Initialize parameters for ODE fitting via gradient descent (on CPU).
-    #     This is just a rough initialization to get parameters into a reasonable range for the prior.
-    #     """
-    #     # Always move everything to CPU for ODE initialization
-    #     target = (self.counts * self.dils).cpu()
-    #     Ts_cpu = self.Ts.cpu().float()
-    #     ndatapoints = self.ndatapoints  # This should be an int already
-
-    #     # Start from init or reasonable guess (ensure CPU)
-    #     if init is None:
-    #         init = torch.tensor([1/24, 1e-2, float(target[Ts_cpu == Ts_cpu.max()].median()), 1e-4], dtype=torch.float32, device='cpu')
-    #     else:
-    #         init = init.detach().cpu().float()
-
-    #     lparams = tor           gradient_norm = l2(lparams.grad).item()
-    #                 print('gradient:', gradient_norm, loss_hist[-1])
-    #                 if gradient_norm < 1e-5:
-    #                     break
-
-    #     # Return parameters in original (non-log) space, **move to desired device**
-    #     return torch.exp(lparams).detach().to(self.device)ch.log(init).clone().detach().requires_grad_()
-
-    #     optimizer = torch.optim.Adam([lparams], lr=.01)
-    #     l2 = lambda x: torch.sqrt((x * x).sum())
-    #     loss_hist = []
-
-    #     print('Initializing using mass-action similarity (CPU)')
-    #                 gradient_norm = l2(lparams.grad).item()
-    #                 print('gradient:', gradient_norm, loss_hist[-1])
-    #                 if gradient_norm < 1e-5:
-    #                     break
-
-    #     # Return parameters in original (non-log) space, **move to desired device**
-    #     return torch.exp(lparams).detach().to(self.device)   # Simulate ODE with current parameters (all CPU)
-    #         n_ode = simulator.integrate_mass_action(torch.exp(lparams), Ts_cpu, dt=0.1, device='cpu')
-
-    #         scaledtime = Ts_cpu / Ts_cpu.min()
-    #         loss = l2((target / n_ode - 1) / (scaledtime ** 2)) * Ts_cpu.min() / ndatapoints
-
-    #         if not (torch.isnan(loss) or torch.isinf(loss)):
-    #             loss.backward()
-    #             optimizer.step()
-    #             loss_hist.append(loss.item())
-    #             if (it + 1) % 10 == 0:for it in tqdm(range(500)):
-    #         optimizer.zero_grad()
-
-    #                 gradient_norm = l2(lparams.grad).item()
-    #                 print('gradient:', gradient_norm, loss_hist[-1])
-    #                 if gradient_norm < 1e-5:
-    #                     break
-
-    #     # Return parameters in original (non-log) space, **move to desired device**
-    #     return torch.exp(lparams).detach().to(self.device)   # Simulate ODE with current parameters (all CPU)
-    #         n_ode = simulator.integrate_mass_action(torch.exp(lparams), Ts_cpu, dt=0.1, device='cpu')
-
-    #         scaledtime = Ts_cpu / Ts_cpu.min()
-    #         loss = l2((target / n_ode - 1) / (scaledtime ** 2)) * Ts_cpu.min() / ndatapoints
-
-    #         if not (torch.isnan(loss) or torch.isinf(loss)):
-    #             loss.backward()
-    #             optimizer.step()
-    #             loss_hist.append(loss.item())
-    #             if (it + 1) % 10 == 0:
-         
