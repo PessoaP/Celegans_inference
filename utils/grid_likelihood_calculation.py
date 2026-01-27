@@ -13,7 +13,7 @@ import os, sys, csv
 import torch
 import numpy as np
 
-from utils.dataclass import TimeSeriesInferenceDataset
+from dataclass import TimeSeriesInferenceDataset
 from utils.load_and_clean_real_data import load_and_clean_real_data
 
 def loglike_alpha_mu_omega(dataset, alpha, mu, omega):

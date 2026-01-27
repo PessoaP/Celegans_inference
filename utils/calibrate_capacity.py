@@ -12,22 +12,20 @@ from utils.load_and_clean_real_data import load_and_pool_real_data
 
 from repop.utils import Igaussmix_loglike 
 
-# Set up functions to include only the top n Gaussians that REPOP predicts 
-def get_top_components_from_dt(dt, top_n=4, by="weight", renormalize=True):
+# Set up functions to include only the rightmost n Gaussians that REPOP predicts 
+def get_rightmost_components_from_dt(dt, top_n=4, renormalize=True):
     m, s, r = dt.ev
 
-    top_n = min(top_n, len(r))
-    if top_n <= 0:
-        raise ValueError("top_n must be >= 1")
+    # sort by mean (ascending)
+    idx = torch.argsort(m)
+    print(dt.ev)
+    print(idx)
 
-    if by == "weight":
-        idx = torch.argsort(-r)[:top_n]
-    elif by == "mean":
-        idx = torch.argsort(-m)[:top_n]
-    elif by == "none":
-        idx = torch.arange(top_n, device=r.device)
-    else:
-        raise ValueError(f"Unknown by={by}")
+    if len(r) < top_n:
+        raise ValueError(f"Only {len(r)} components available")
+
+    # take the rightmost top_n
+    idx = idx[-top_n:]
 
     mN, sN, rN = m[idx], s[idx], r[idx]
 
@@ -36,14 +34,13 @@ def get_top_components_from_dt(dt, top_n=4, by="weight", renormalize=True):
 
     return mN, sN, rN
 
-
 def reconstruct_top_components(dt, top_n=4, narray=None, cpu=True, **kwargs):
     if narray is None:
         x = dt.n
     else:
         x = narray * 1.
 
-    m, s, r = get_top_components_from_dt(dt, top_n=top_n, **kwargs)
+    m, s, r = get_rightmost_components_from_dt(dt, top_n=top_n, **kwargs)
 
     p = torch.exp(Igaussmix_loglike(x, m, s, r))
 
@@ -54,7 +51,7 @@ def reconstruct_top_components(dt, top_n=4, narray=None, cpu=True, **kwargs):
 
 
 # Load data from only Day 9 from selected real data CSVs
-capacity_calibrating_datasets = ["real_data/Exp_1_live_lowpH.csv", "real_data/Exp_4_live_highpH.csv"]
+capacity_calibrating_datasets = ["real_data/Exp_1_live_lowpH.csv"]#, "real_data/Exp_4_live_highpH.csv"]
 
 df_day9 = load_and_pool_real_data(
     filepaths=capacity_calibrating_datasets,  # load in selected CSVs
@@ -76,10 +73,12 @@ dils   = df_day9["Dilution"].to_numpy()
 dt = repop.dataset(counts=counts, dils=dils, cutoff=300)
 
 # Fit the mixture (required before reconstruction)
-dt.evaluate(components=repop.weak_limit, observe=True)  # you can tune tol/lr later
+dt.evaluate(components=repop.weak_limit, observe=True,component_cut=0) 
+
+print(dt.ev)
 
 # Use just the top 4 Gaussians in the mixture as the true "capacity" distribution
-x, p = reconstruct_top_components(dt, top_n=4, cpu=True, by="weight", renormalize=True)
+x, p = reconstruct_top_components(dt, top_n=4, cpu=True, renormalize=True)
 
 # Make them 1D numpy arrays for saving / sampling
 x = x.reshape(-1).detach().cpu().numpy()
