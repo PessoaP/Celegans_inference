@@ -1,82 +1,142 @@
+# make_synthetic_data.py
 import os
-import torch
 import numpy as np
 import pandas as pd
-
+import torch
 
 from utils.simulator import sample
 
-class SyntheticSimulator:
+
+# =========================
+# CONFIG 
+# =========================
+
+# Output
+OUT_CSV = "synthetic_data/synthetic_data.csv"
+
+# Simulation design
+WORMS_PER_DAY = 75
+DAYS = torch.tensor([1, 3, 5, 7, 9], dtype=torch.int64)  # in days; code converts to hours
+
+# Forward-model params (alpha, mu, d are scalars; kappa comes from distribution)
+ALPHA = 0.01
+MU = 0.48
+D = 0.038461538461538464*MU
+
+# Kappa distribution file
+KAPPA_NPZ = "synthetic_data/kappa_samples_Exp1_4gauss.npz"
+
+# RNG seed for reproducibility of kappa draws
+SEED = 0
+
+# Device
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+# =========================
+# Helpers
+# =========================
+
+def load_kappa_pool(npz_path: str) -> np.ndarray:
     """
-    Simulates counts from a stochastic growth model at different times,
-    applies dilution, and exports results to CSV.
+    Load a 1D pool of kappa samples from an .npz.
     """
-    def __init__(self, params, device=None):
-        self.params = params
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        os.makedirs("synthetic_data", exist_ok=True)
-        
-    def sample_n(self, size, T):
-        print(f"Sampling {size} trajectories at times {T[:5]}... (showing first 5)")
-        _, E = sample(self.params, T=T, N=size, device=self.device)
-        return E
+    z = np.load(npz_path)
+    return z["kappa_samples"].reshape(-1)
 
 
-    def sample_data(self, size=75, Ts=torch.tensor([1, 3, 5, 7, 9])):
-        """
-        Simulate and dilute counts for multiple timepoints (wide format).
-        """
-        Ts = Ts.clone().to(self.device).float()
-        T_batch = Ts.repeat_interleave(size) * 24  # Convert days to hours
-        n_sam = self.sample_n(size=T_batch.numel(), T=T_batch).cpu()
+def build_params_per_trajectory(
+    alpha: float,
+    mu: float,
+    d: float,
+    kappa_pool: np.ndarray,
+    N: int,
+    seed: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """
+    Returns params of shape (4, N): [alpha, mu, k, d] per trajectory.
+    Draws k ~ kappa_pool with replacement.
+    """
+    rng = np.random.default_rng(seed)
+    k_draws = rng.choice(kappa_pool, size=N, replace=True)
 
-        # Serial dilution steps
-        # Start with true bacteria count per worm/timepoint in the 200 µL homogenate
-        n0 = n_sam.float()
+    params = torch.empty((4, N), device=device, dtype=torch.float32)
+    params[0, :] = float(alpha)
+    params[1, :] = float(mu)
+    params[2, :] = torch.tensor(k_draws, device=device, dtype=torch.float32)
+    params[3, :] = float(d)
 
-        # Step 0: take 10 µL out of 200 µL homogenate into tube 1 (then add 90 µL diluent)
-        # bacteria in tube 1 before plating/transfer
-        tube1 = torch.distributions.Binomial(total_count=n0, probs=10/200).sample()
+    return params
 
-        # Tube 1: partition 100 µL into 10 µL transfer + 90 µL plated
-        tube2 = torch.distributions.Binomial(total_count=tube1, probs=10/100).sample()
-        c1    = tube1 - tube2  # plated from tube 1 (90 µL)
 
-        # Tube 2: again partition into 10 µL transfer + 90 µL plated
-        tube3 = torch.distributions.Binomial(total_count=tube2, probs=10/100).sample()
-        c2    = tube2 - tube3  # plated from tube 2
+def simulate_and_dilute(params_4xN: torch.Tensor, T_hours: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Runs forward model and returns plated counts (c1, c2, c3) as int tensors on CPU.
+    """
+    N = T_hours.numel()
+    _, E = sample(params_4xN, T=T_hours, N=N, device=params_4xN.device)
+    n0 = E.to(torch.float32)  # bacteria per worm/timepoint in 200 µL homogenate
 
-        # Tube 3: again partition
-        tube4 = torch.distributions.Binomial(total_count=tube3, probs=10/100).sample()
-        c3    = tube3 - tube4  # plated from tube 3
+    # Step 0: 10 µL out of 200 µL into tube 1, then add diluent (modeled as binomial partition)
+    tube1 = torch.distributions.Binomial(total_count=n0, probs=10 / 200).sample()
 
-        n_timepoints = len(Ts)
-        df = pd.DataFrame({
-            'Worm #': np.tile(np.arange(1, size + 1), n_timepoints),
-            'CFU_22': c1.int().cpu().numpy(),
-            'CFU_222': c2.int().cpu().numpy(),
-            'CFU_2222': c3.int().cpu().numpy(),
-            'Day': np.repeat(Ts.cpu().numpy(), size)
-        })
-        df["Day"] = df["Day"].astype(int)
-        df["Worm #"] = df["Worm #"].astype(int)
+    # Tube 1: partition 100 µL into 10 µL transfer + 90 µL plated
+    tube2 = torch.distributions.Binomial(total_count=tube1, probs=10 / 100).sample()
+    c1 = tube1 - tube2  # plated from tube 1 (90 µL)
 
-        return df
+    # Tube 2: again partition into 10 µL transfer + 90 µL plated
+    tube3 = torch.distributions.Binomial(total_count=tube2, probs=10 / 100).sample()
+    c2 = tube2 - tube3
 
-    def sample_save(self, size=75, Ts=torch.tensor([1, 3, 5, 7, 9]), filename="synthetic_data/synthetic_data.csv"):
-        print("Beginning synthetic data generation and save...")
-        df = self.sample_data(size=size, Ts=Ts)
-        print(f"Saving to {filename}...")
-        df.to_csv(filename, index=False)
-        print(f"Synthetic data saved to {filename}")
+    # Tube 3: again partition
+    tube4 = torch.distributions.Binomial(total_count=tube3, probs=10 / 100).sample()
+    c3 = tube3 - tube4
 
-# --------- Main Script Usage ---------
+    return c1.to(torch.int32).cpu(), c2.to(torch.int32).cpu(), c3.to(torch.int32).cpu()
+
+
+# =========================
+# Main
+# =========================
+
+def main():
+    os.makedirs(os.path.dirname(OUT_CSV) or ".", exist_ok=True)
+
+    # Load kappa distribution
+    kappa_pool = load_kappa_pool(KAPPA_NPZ)
+    print(f"Loaded kappa pool from {KAPPA_NPZ} (n={kappa_pool.size}). "
+          f"min={kappa_pool.min():.3g}, max={kappa_pool.max():.3g}")
+
+    # Build times: each day repeated WORMS_PER_DAY times
+    days = DAYS.clone()
+    n_timepoints = days.numel()
+    N = int(WORMS_PER_DAY * n_timepoints)
+
+    # Convert to hours and expand to per-trajectory vector
+    T_hours = (days.to(torch.float32).repeat_interleave(WORMS_PER_DAY) * 24.0).to(DEVICE)
+
+    # Build params per trajectory with kappa draws
+    params_4xN = build_params_per_trajectory(
+        alpha=ALPHA, mu=MU, d=D, kappa_pool=kappa_pool, N=N, seed=SEED, device=DEVICE
+    )
+
+    # Forward simulate + dilute
+    c1, c2, c3 = simulate_and_dilute(params_4xN, T_hours)
+
+    # Assemble dataframe (wide format)
+    df = pd.DataFrame({
+        "Worm #": np.tile(np.arange(1, WORMS_PER_DAY + 1), n_timepoints).astype(int),
+        "CFU_22": c1.numpy().astype(int),
+        "CFU_222": c2.numpy().astype(int),
+        "CFU_2222": c3.numpy().astype(int),
+        "Day": np.repeat(days.cpu().numpy().astype(int), WORMS_PER_DAY).astype(int),
+    })
+
+    df.to_csv(OUT_CSV, index=False)
+    print(f"Wrote synthetic data: {OUT_CSV}")
+    print(df.head(10))
+
 
 if __name__ == "__main__":
-    # Example parameter vector: adjust as needed
-    params = torch.tensor([1/20, 0.25, 1e6, 0.2])
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    sim = SyntheticSimulator(params=params, device=device)
-
-    # Simulate for 75 worms at each of days 1,3,5,7,9
-    sim.sample_save(size=75, Ts=torch.tensor([1, 3, 5, 7, 9]))
+    main()

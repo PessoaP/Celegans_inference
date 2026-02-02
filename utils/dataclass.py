@@ -171,7 +171,7 @@ class TimeSeriesInferenceDataset():
 
         # --- simulate trajectories ---
         ns = simulate_for_likelihood(params, self.times) 
-        self.last_simulated_ns = ns
+        # self.last_simulated_ns = ns -- don't save ns on self
 
         # --- score simulated ns against observed plate-count+dilution data ---
         log_probs = self.lpkdil_ns(ns, reduce=True, concat=True) # Does the calculation (logmeanexp / logsumexp - log N).

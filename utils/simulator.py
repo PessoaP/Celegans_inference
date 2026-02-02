@@ -92,7 +92,7 @@ def Gillespie_step(params, E, dt_max):
     dE[change] += S[reacts][change]
     return dt, dE
 
-def tau_leap(params, E, dt_max):
+def tau_leap(params, E, dt_max, dt_min=1/60): # currently say minimum dt = 0.1 min = 0.1/60 hours
     """
     One tau-leap step for high E systems.
     Parameters
@@ -111,16 +111,19 @@ def tau_leap(params, E, dt_max):
     exp_change = torch.abs((rates*S).sum(axis=1))
     # Choose dt such that the expected *net* change in E during dt is approximately E / 100
     dt = (E / 101) / exp_change
-    dt = dt.clamp(max=.1)
 
-    change = dt < dt_max
-    dt[~change] = dt_max[~change]
+    # enforce min and max
+    dt = dt.clamp(min=dt_min, max=0.1)
+
+    # also respect dt_max
+    dt = torch.minimum(dt, dt_max)
 
     num_reac = ez_sample_poisson(rates * dt[:, None])
     dE = (num_reac * S).sum(axis=1).int()
+
     return dt, dE
 
-def step(params, E, t0, T, E_tol=1e3):
+def step(params, E, t0, T, E_tol=250):
     """
     Single adaptive step (Gillespie or tau-leap depending on E).
     Parameters
