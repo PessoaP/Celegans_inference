@@ -92,7 +92,7 @@ def Gillespie_step(params, E, dt_max):
     dE[change] += S[reacts][change]
     return dt, dE
 
-def tau_leap(params, E, dt_max, dt_min=1/60): # currently say minimum dt = 0.1 min = 0.1/60 hours
+def tau_leap(params, E, dt_max, dt_min=0.): # currently say minimum dt = 0.1 min = 0.1/60 hours
     """
     One tau-leap step for high E systems.
     Parameters

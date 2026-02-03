@@ -23,6 +23,10 @@ ALPHA = 0.01
 MU = 0.48
 D = 0.038461538461538464*MU
 
+ALPHA = 0.05
+MU = 0.5
+D = 0.04*MU
+
 # Kappa distribution file
 KAPPA_NPZ = "synthetic_data/kappa_samples_Exp1_4gauss.npz"
 

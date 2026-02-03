@@ -42,9 +42,8 @@ class TimeSeriesInferenceDataset():
         self.ndatapoints = self.counts.size(0)
         self.cutoff = cutoff
 
-        # Now call REPOP on CPU
-        self.lpkdil_n = repop.get_lpkdil_n(self.counts.cpu(), self.dils.cpu(), self.n.cpu(),
-                                        cutoff, self.Nmax).cpu()
+        self.lpkdil_n = repop.get_lpkdil_n(self.counts, self.dils, self.n,
+                                        cutoff, self.Nmax).to(self.device)
 
         # Only here do we switch to the chosen device (GPU or CPU)
 
@@ -76,8 +75,8 @@ class TimeSeriesInferenceDataset():
         lpkdil_list = []
         for index in range(len(dataset.times)):
             mask = (dataset.T_index == index).reshape(-1)
-            mask_cpu = mask.to("cpu")                 # CPU mask for indexing lpkdil_n (which is on CPU)
-            lpkdil_n = dataset.lpkdil_n[mask_cpu]    
+            #mask_cpu = mask.to("cpu")                 # CPU mask for indexing lpkdil_n (which is on CPU)
+            lpkdil_n = dataset.lpkdil_n[mask]    
 
             n_ind_full = ns[index].to(device=lpkdil_n.device, dtype=torch.long)
             M = n_ind_full.numel()
