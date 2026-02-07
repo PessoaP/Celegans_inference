@@ -21,7 +21,7 @@ Functions:
 Assumes 4 reactions:
     R1: ∅ → E      (rate: α)
     R2: E → 2E     (rate: μE)
-    R3: 2E → E (rate: (μE-d)/k * E^2)
+    R3: 2E → E (rate: (μ-d)/k * E^2)
     R4: E → ∅      (rate: dE)
 """
 import torch
@@ -109,6 +109,7 @@ def tau_leap(params, E, dt_max, dt_min=0.): # currently say minimum dt = 0.1 min
 
     # Compute the expected net change in total entity count per unit time
     exp_change = torch.abs((rates*S).sum(axis=1))
+    exp_change = exp_change.clamp_min(1e-12)
     # Choose dt such that the expected *net* change in E during dt is approximately E / 100
     dt = (E / 101) / exp_change
 
@@ -259,34 +260,3 @@ def sample_record(params, record_times, N, E_initial=None,
 
     return snapshots
 
-
-def integrate_mass_action(params, Ts, dt=0.1,device='cpu'):
-    """
-    Simulate ODE trajectories from E=0 using Euler method.
-    """
-    params = params.to(device)
-    S_ma = S.to(device)
-    E = torch.zeros(1,device=device)
-    t = 0
-
-    dEdt = lambda Ex: (get_rates(Ex,params.reshape(-1,1))*S_ma).sum(axis=1)
-    
-    # Make sure Ts is a tensor on cpu
-    if not isinstance(Ts, torch.Tensor):
-        Ts = torch.tensor(Ts, device='cpu').float()
-    else:
-        Ts = Ts.to('cpu').float()
-
-    Es = []
-    for T in Ts:
-        if not isinstance(T, torch.Tensor):
-            T = torch.tensor(T, device='cpu').float()
-        else:
-            T = T.to('cpu').float()
-        while t + dt < T:
-            E = E + dEdt(E) * dt
-            t = t + dt
-        E = E + dEdt(E) * (T - t)
-        t = T
-        Es.append(E.clone())
-    return torch.stack(Es)

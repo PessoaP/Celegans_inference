@@ -19,13 +19,10 @@ WORMS_PER_DAY = 75
 DAYS = torch.tensor([1, 3, 5, 7, 9], dtype=torch.int64)  # in days; code converts to hours
 
 # Forward-model params (alpha, mu, d are scalars; kappa comes from distribution)
-ALPHA = 0.01
-MU = 0.48
-D = 0.038461538461538464*MU
 
 ALPHA = 0.05
 MU = 0.5
-D = 0.04*MU
+D = 0.12
 
 # Kappa distribution file
 KAPPA_NPZ = "synthetic_data/kappa_samples_Exp1_4gauss.npz"

@@ -18,14 +18,14 @@ OUTDIR_DEFAULT    = "recovery_tests/grid"
 CUTOFF_DEFAULT = 300
 
 # Ground truth (synthetic generation)
-ALPHA_TRUE = 0.01
-MU_TRUE    = 0.48
-D_TRUE     = 0.038461538461538464 * MU_TRUE
+ALPHA_TRUE = 0.05
+MU_TRUE = 0.5
+D_TRUE = 0.12
 
 # Grids
 ALPHAS = np.linspace(0.0, 0.1, 11)[1:]   # 10
-MUS    = np.linspace(0.2, 1, 11)[1:]  # 10
-DS     = np.linspace(0.0, 1, 11)[1:]  # 10
+MUS    = np.linspace(0.2, 1.0, 11)[1:]  # 10
+DS     = np.linspace(0.0, 0.2, 11)[1:]  # 10
 
 
 # =========================
@@ -94,12 +94,9 @@ def run_2d_sweep(
     truth=(ALPHA_TRUE, MU_TRUE, D_TRUE),
     outdir=OUTDIR_DEFAULT,
     flush_every: int = 50,
-    job_idx: int = 0,
-    job_count: int = 1,
 ):
     """
     Computes a 2D grid over (w1,w2), holding the third parameter fixed at truth.
-    Resumable, and supports "job slicing" by assigning rows where idx % job_count == job_idx.
 
     Output CSV columns: idx, alpha, mu, d, loglike
     """
@@ -108,7 +105,7 @@ def run_2d_sweep(
 
     ensure_header(out_path, header)
 
-    # Build full list of parameter combinations in deterministic order
+    # Full deterministic grid (idx increases with nested loops)
     grid = []
     idx = 0
     for x in g1:
@@ -116,12 +113,10 @@ def run_2d_sweep(
             grid.append((idx, float(x), float(y)))
             idx += 1
 
-    # Figure out how many rows already exist (global resume)
-    start_idx = count_rows_minus_header(out_path)
+    start_row = count_rows_minus_header(out_path)
 
-    # We’ll continue from that point, but ALSO apply job slicing so jobs don't overlap.
     print(f"[{name}] out={out_path}")
-    print(f"[{name}] total grid points={len(grid)}  start_idx={start_idx}  job={job_idx}/{job_count}")
+    print(f"[{name}] resume_row={start_row}")
 
     a0, m0, d0 = truth
 
@@ -129,37 +124,38 @@ def run_2d_sweep(
         w = csv.writer(f)
 
         wrote = 0
-        for k in range(start_idx, len(grid)):
-            idx, x, y = grid[k]
+        idx = 0
+        for x in g1:
+            for y in g2:
+                if idx < start_row:
+                    idx += 1
+                    continue
 
-            # Slice across multiple jobs (optional)
-            if (idx % job_count) != job_idx:
-                continue
+                a, m, d = a0, m0, d0
 
-            a, m, d = a0, m0, d0
+                if w1 == "alpha": a = float(x)
+                elif w1 == "mu":  m = float(x)
+                elif w1 == "d":   d = float(x)
+                else: raise ValueError(f"bad w1={w1}")
 
-            # assign x to w1, y to w2
-            if w1 == "alpha": a = x
-            elif w1 == "mu":  m = x
-            elif w1 == "d":   d = x
-            else: raise ValueError(f"bad w1={w1}")
+                if w2 == "alpha": a = float(y)
+                elif w2 == "mu":  m = float(y)
+                elif w2 == "d":   d = float(y)
+                else: raise ValueError(f"bad w2={w2}")
 
-            if w2 == "alpha": a = y
-            elif w2 == "mu":  m = y
-            elif w2 == "d":   d = y
-            else: raise ValueError(f"bad w2={w2}")
+                ll = loglike_alpha_mu_d(dataset, a, m, d)
+                w.writerow([idx, a, m, d, ll])
+                wrote += 1
+                idx += 1
 
-            ll = loglike_alpha_mu_d(dataset, a, m, d)
-            w.writerow([idx, a, m, d, ll])
-            wrote += 1
-
-            if wrote % flush_every == 0:
-                flush_safely(f)
-                print(f"[{name}] wrote {wrote} rows (idx up to ~{idx})")
+                if wrote % flush_every == 0:
+                    flush_safely(f)
+                    print(f"[{name}] wrote {wrote} rows (last idx={idx-1})")
 
         flush_safely(f)
 
     print(f"[{name}] done. newly wrote={wrote}\n")
+
 
 
 # =========================
@@ -174,10 +170,10 @@ def main():
     p.add_argument("--cutoff", type=int, default=CUTOFF_DEFAULT)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--flush-every", type=int, default=50)
-
-    # Optional: if later you want to split across GPUs/nodes
-    p.add_argument("--job-idx", type=int, default=0)
-    p.add_argument("--job-count", type=int, default=1)
+    p.add_argument("--t-switch", type=float, default=None,
+              help="time (hours) when feeding stops / regime switches. None = no switch")
+    p.add_argument("--rho", type=float, default=1.0,
+                help="colonization scaling after t_switch")
 
     args = p.parse_args()
 
@@ -196,11 +192,11 @@ def main():
     kappa_np = np.load(args.kappa)["kappa_samples"]
 
     dataset = TimeSeriesInferenceDataset(
-        ts=ts,
-        counts=counts,
-        dils=dils,
+        ts=ts, counts=counts, dils=dils,
         kappa_samples=kappa_np,
         cutoff=args.cutoff,
+        t_switch=args.t_switch,
+        rho=args.rho,
         device=device,
     )
 
@@ -209,16 +205,13 @@ def main():
 
     # ---- run the three 2D sweeps ----
     run_2d_sweep(dataset, "alpha_mu", "alpha", ALPHAS, "mu", MUS,
-                truth=truth, outdir=args.outdir, flush_every=args.flush_every,
-                job_idx=args.job_idx, job_count=args.job_count)
+                truth=truth, outdir=args.outdir, flush_every=args.flush_every)
 
     run_2d_sweep(dataset, "alpha_d", "alpha", ALPHAS, "d", DS,
-                truth=truth, outdir=args.outdir, flush_every=args.flush_every,
-                job_idx=args.job_idx, job_count=args.job_count)
+                truth=truth, outdir=args.outdir, flush_every=args.flush_every)
 
     run_2d_sweep(dataset, "mu_d", "mu", MUS, "d", DS,
-                truth=truth, outdir=args.outdir, flush_every=args.flush_every,
-                job_idx=args.job_idx, job_count=args.job_count)
+                truth=truth, outdir=args.outdir, flush_every=args.flush_every)
 
     print("All 2D sweeps complete.")
 

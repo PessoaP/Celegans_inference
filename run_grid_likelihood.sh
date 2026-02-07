@@ -49,5 +49,5 @@ mkdir -p "$OUTDIR"
 cp -rv "grid_likelihood_outputs/$BASENAME_NOEXT" "$OUTDIR"/
 
 # Also keep a copy of the κ samples used (provenance)
-cp -v "kappa_samples_stratified.npz" "$OUTDIR"/
+cp -v "kappa_samples_Exp1_4gauss.npz" "$OUTDIR"/
 

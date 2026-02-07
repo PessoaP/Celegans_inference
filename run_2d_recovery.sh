@@ -45,8 +45,8 @@ python run_2d_recovery.py \
   --outdir "$OUTDIR_REL" \
   --device cuda:0 \
   --flush-every 50 \
-  --job-idx 0 \
-  --job-count 1
+  --t-switch 24.0 \
+  --rho 0.1
 
 # === Copy outputs back to a persistent location ===
 OUTDIR=~/recovery_2d_runs/${SLURM_JOB_ID}
