@@ -39,7 +39,7 @@ KAPPA_NPZ="synthetic_data/kappa_samples_Exp1_4gauss.npz"
 OUTDIR_REL="recovery_tests/grid_single_gpu"
 
 # === Run Script ===
-python run_2d_recovery.py \
+python run_2d_recovery_omega.py \
   --data "$DATA_PATH" \
   --kappa "$KAPPA_NPZ" \
   --outdir "$OUTDIR_REL" \

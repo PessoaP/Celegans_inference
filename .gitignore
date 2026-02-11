@@ -1,5 +1,8 @@
 inference_outputs/
 __pycache__/
+utils/__pycache__/
 records_*/
 inference_driver.py
 tests/
+kappa_samples_Exp1_only (same as 4gauss).npz
+plottwokappa.ipynb

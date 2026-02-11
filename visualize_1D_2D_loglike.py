@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # ============================================================
-# Saving helper (NEW)
+# Helper Functions
 # ============================================================
 
 def _maybe_save(fig, save_dir: str | Path | None = None, fname: str | None = None, dpi: int = 300):
@@ -19,11 +19,6 @@ def _maybe_save(fig, save_dir: str | Path | None = None, fname: str | None = Non
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     fig.savefig(save_dir / fname, dpi=dpi)
-
-
-# ============================================================
-# Notebook-identical conventions
-# ============================================================
 
 def parse_slice_name(slice_name: str):
     parts = slice_name.split("_")
@@ -70,7 +65,7 @@ def _finite_safe_for_plot(Z: np.ndarray, floor: float) -> np.ndarray:
 
 
 # ============================================================
-# 1D plotting (display window via y-lims only; no clipping)
+# 1D plotting 
 # ============================================================
 
 def plot_1d_sweep(
@@ -84,9 +79,9 @@ def plot_1d_sweep(
     figsize=(6, 3.5),
     sort_x: bool = True,
     show: bool = True,
-    save_dir: str | Path | None = None,  # NEW
-    fname: str | None = None,            # NEW
-    dpi: int = 300,                      # NEW
+    save_dir: str | Path | None = None,  
+    fname: str | None = None,            
+    dpi: int = 300,                      
 ):
     csv_path = os.path.join(base_dir, f"{param_name}_only.csv")
     df = pd.read_csv(csv_path)
@@ -148,9 +143,9 @@ def plot_2d_grid_slice(
     cmap=None,
     figsize=(6, 5),
     show: bool = True,
-    save_dir: str | Path | None = None,  # NEW
-    fname: str | None = None,            # NEW
-    dpi: int = 300,                      # NEW
+    save_dir: str | Path | None = None,  
+    fname: str | None = None,            
+    dpi: int = 300,                      
 ):
     var1, var2 = parse_slice_name(slice_name)
     xvar, yvar = choose_axes(var1, var2)
@@ -336,15 +331,15 @@ def make_combined_panel(
 
 
 # ============================================================
-# Example usage
+# Running
 # ============================================================
 
 if __name__ == "__main__":
-    base = "recovery_tests/grid_regular"  # <-- change
+    base = "recovery_tests/grid_TL_seed10"  # <-- change per dataset
     truth = {"alpha": 0.05, "mu": 0.5, "d": 0.12}
 
     # Choose a subfolder under figures/
-    SAVE_DIR = Path("figures") / "grid_synth_regularfeed"
+    SAVE_DIR = Path("figures") / "grid_synth_TLfeed"
 
     # --- Notebook-identical single figures (now saving) ---
     plot_1d_sweep(base, "alpha", truth=truth, ll_window=20, vmax_pad=1.0,

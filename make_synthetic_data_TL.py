@@ -71,31 +71,54 @@ def build_params_per_trajectory(
     return params
 
 
-def simulate_and_dilute(params_4xN: torch.Tensor, T_hours: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Runs forward model and returns plated counts (c1, c2, c3) as int tensors on CPU.
-    """
+def simulate_and_dilute(params_4xN: torch.Tensor, T_hours: torch.Tensor,
+                        t_switch: float = 24.0, rho: float = 0.1):
     N = T_hours.numel()
-    _, E = sample(params_4xN, T=T_hours, N=N, t_switch=None, rho_early=1.0, rho_late=0.1, device=params_4xN.device)
-    n0 = E.to(torch.float32)  # bacteria per worm/timepoint in 200 µL homogenate
+    device = params_4xN.device
+    T_hours = T_hours.to(device=device, dtype=torch.float32).reshape(-1)
 
-    # Step 0: 10 µL out of 200 µL into tube 1, then add diluent (modeled as binomial partition)
+    # Base params (stage 1): alpha unchanged
+    params_pre = params_4xN
+
+    # Stage 2 params: alpha scaled
+    params_post = params_4xN.clone()
+    params_post[0, :] = params_post[0, :] * float(rho)
+
+    t0 = float(t_switch)
+
+    # Everyone runs stage 1 up to min(T, t_switch)
+    T1 = torch.minimum(T_hours, torch.full_like(T_hours, t0))
+    _, E1 = sample(params_pre, T=T1, N=N, device=device)
+
+    # If no one goes past switch, we’re done
+    mask_post = T_hours > t0
+    E_final = E1
+
+    # For those with T > t_switch, continue from E(t_switch) for duration (T - t_switch)
+    if torch.any(mask_post):
+        T2 = (T_hours[mask_post] - t0)
+        _, E2 = sample(
+            params_post[:, mask_post],
+            E_initial=E1[mask_post],
+            T=T2,
+            N=int(mask_post.sum().item()),
+            device=device,
+        )
+        E_final = E_final.clone()
+        E_final[mask_post] = E2
+
+    n0 = E_final.to(torch.float32)
+
+    # dilution steps exactly as you wrote...
     tube1 = torch.distributions.Binomial(total_count=n0, probs=10 / 200).sample()
-
-    # Tube 1: partition 100 µL into 10 µL transfer + 90 µL plated
     tube2 = torch.distributions.Binomial(total_count=tube1, probs=10 / 100).sample()
-    c1 = tube1 - tube2  # plated from tube 1 (90 µL)
-
-    # Tube 2: again partition into 10 µL transfer + 90 µL plated
+    c1 = tube1 - tube2
     tube3 = torch.distributions.Binomial(total_count=tube2, probs=10 / 100).sample()
     c2 = tube2 - tube3
-
-    # Tube 3: again partition
     tube4 = torch.distributions.Binomial(total_count=tube3, probs=10 / 100).sample()
     c3 = tube3 - tube4
 
     return c1.to(torch.int32).cpu(), c2.to(torch.int32).cpu(), c3.to(torch.int32).cpu()
-
 
 # =========================
 # Main
@@ -123,7 +146,7 @@ def main():
     )
 
     # Forward simulate + dilute
-    c1, c2, c3 = simulate_and_dilute(params_4xN, T_hours)
+    c1, c2, c3 = simulate_and_dilute(params_4xN, T_hours, t_switch=24.0, rho=0.1)
 
     # Assemble dataframe (wide format)
     df = pd.DataFrame({

@@ -51,6 +51,7 @@ def load_one(csv_path: str) -> pd.DataFrame:
     if missing:
         raise ValueError(f"{csv_path}: missing columns {missing}. Has {list(df.columns)}")
     df = df[["alpha", "mu", "omega", "loglike"]].copy()
+    df["d"] = df["alpha"] * df["omega"]
     df["source"] = Path(csv_path).stem
     return df
 
@@ -124,8 +125,8 @@ def merged_highlike_plot(
     sc = ax.scatter(
         sub["alpha"].to_numpy(),
         sub["mu"].to_numpy(),
-        sub["omega"].to_numpy(),
-        c=rel,                # relative loglike in [-delta, 0]
+        sub["d"].to_numpy(),       # <-- derived quantity from mu*omega
+        c=rel,
         s=s,
         alpha=alpha_scatter,
         cmap="viridis",
@@ -134,7 +135,7 @@ def merged_highlike_plot(
 
     ax.set_xlabel("alpha")
     ax.set_ylabel("mu")
-    ax.set_zlabel("omega")
+    ax.set_zlabel("d")
     ax.view_init(elev=elev, azim=azim)
 
     ax.set_title(

@@ -1,6 +1,0 @@
-python visualize_2D_grid_slices.py \
-  --csv recovery_tests/grid_Exp1/grid_loglike_task01.csv
-
-python visualize_3D_highlikelihood_merged.py \
---dir recovery_tests/grid_Exp1 \
---delta 10

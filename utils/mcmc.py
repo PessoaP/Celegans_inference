@@ -1,255 +1,320 @@
-import os
-import torch
-import numpy as np
+"""
+mcmc.py
 
-# === Prior Construction from ODE Initialization (CPU) ===
+Annealed Metropolis–Hastings in log-space (u = log(theta)) for positive parameters.
+
+Key features:
+- Start from user-chosen theta0 (no ODE init)
+- Fixed dataset internals (kappa_samples, rho, t_switch) baked into dataset construction
+- Annealing: beta ramps from beta0 -> 1 over warmup_frac * n_steps
+- No adaptive covariance
+- Simple checkpointing + resume
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, asdict
+from typing import Optional, Sequence, Tuple, Union, Dict, Any
+
+import numpy as np
+import torch
+
+
+# ============================================================
+# Priors
+# ============================================================
 
 class LogNormalPrior:
-    def __init__(self, loc, scale):
-        self.base = torch.distributions.LogNormal(loc, scale)
-    def log_prob(self, x):
+    def __init__(self, logmean: torch.Tensor, logstd: torch.Tensor):
+        self.logmean = logmean
+        self.logstd = logstd
+        self.base = torch.distributions.LogNormal(self.logmean, self.logstd)
+
+    def to(self, device: Union[str, torch.device]) -> "LogNormalPrior":
+        device = torch.device(device)
+        self.logmean = self.logmean.to(device)
+        self.logstd = self.logstd.to(device)
+        self.base = torch.distributions.LogNormal(self.logmean, self.logstd)
+        return self
+
+    def log_prob(self, x: torch.Tensor) -> torch.Tensor:
         return self.base.log_prob(x).sum()
-    def sample(self):
-        return self.base.sample()
 
-def make_prior_from_initial_guess(dataset, frac_error=0.5, device=None, min_logstd=1e-2):
-    default_guess = torch.tensor([1/20, 1/4, 2e5, 0.1], dtype=torch.float32, device='cpu')
 
-    init_phys = dataset.ode_initialization(default_guess).detach()
-    init_phys = torch.clamp(init_phys, min=1e-12)
-
-    # Expect init_phys = (alpha, mu, k, d) or (alpha, mu, d)
-    alpha0 = init_phys[0]
-    mu0    = init_phys[1]
-    d0     = init_phys[-1]   # if 4 params, last is d; if 3 params, last is d
-
-    r0 = torch.clamp(mu0 - d0, min=1e-12)
-    qm1_0 = torch.clamp(d0 / r0, min=1e-12)   # q-1 = d/r
-
-    init_guess = torch.stack([alpha0, r0, qm1_0])
-
-    if device is not None:
-        init_guess = init_guess.to(device)
-
-    logmean = torch.log(init_guess)
+def make_lognormal_prior_centered(
+    center_theta: torch.Tensor,
+    frac_error: Union[float, Sequence[float]] = 0.7,
+    min_logstd: float = 1e-2,
+) -> LogNormalPrior:
+    """
+    LogNormal prior centered at center_theta with multiplicative uncertainty.
+    """
+    center_theta = torch.as_tensor(center_theta, dtype=torch.float32).clamp_min(1e-12)
+    logmean = torch.log(center_theta)
 
     if np.isscalar(frac_error):
         frac_error = [float(frac_error)] * logmean.numel()
-    frac_error = torch.as_tensor(frac_error, dtype=logmean.dtype, device=logmean.device)
+    frac_error = torch.as_tensor(frac_error, dtype=logmean.dtype)
 
     logstd = torch.log1p(frac_error).clamp_min(min_logstd)
-    prior = LogNormalPrior(logmean, logstd)
-    return prior, init_guess
+    return LogNormalPrior(logmean=logmean, logstd=logstd)
 
 
-# === Space transforms ===
-def to_u(theta):      # θ -> u
+# ============================================================
+# Transforms
+# ============================================================
+
+def to_u(theta: torch.Tensor) -> torch.Tensor:
     return torch.log(theta)
 
-def to_theta(u):      # u -> θ
+def to_theta(u: torch.Tensor) -> torch.Tensor:
     return torch.exp(u)
 
-def logabsdet_J_exp(u):
-    # θ = exp(u): diag(exp(u_i)) => log|J| = sum u_i
+def logabsdet_J_exp(u: torch.Tensor) -> torch.Tensor:
     return u.sum()
 
 
-# === Target in u-space (posterior ∘ exp + Jacobian) ===
-def make_logposterior_u(data, prior, debug=False):
-    def logposterior_u(u):
-        theta = to_theta(u)  # theta = (alpha, r, qm1)
-        if torch.any(theta <= 0) or torch.any(~torch.isfinite(theta)):
-            return torch.tensor(-float('inf'), device=u.device)
+# ============================================================
+# Annealing schedule
+# ============================================================
 
-        # prior on (alpha, r, qm1)
-        lp = prior.log_prob(theta)
-
-        # map to physical (alpha, mu, d) for simulator/likelihood
-        alpha, r, qm1 = theta
-        q  = 1.0 + qm1
-        mu = r * (q / (q - 1.0))
-        d  = r * (1.0 / (q - 1.0))
-        theta_phys = torch.stack([alpha, mu, d])
-
-        ll = data.loglike(theta_phys)
-
-        jac = logabsdet_J_exp(u)  # still sum(u)
-
-        if debug:
-            print("theta_infer (alpha,r,qm1):", theta.detach().cpu().numpy())
-            print("theta_phys (alpha,mu,d):", theta_phys.detach().cpu().numpy())
-            print("lp:", float(lp), "ll:", float(ll), "jac:", float(jac))
-
-        if not torch.isfinite(lp) or not torch.isfinite(ll):
-            return torch.tensor(-float('inf'), device=u.device)
-
-        return lp + ll + jac
-    return logposterior_u
-
-
-
-# === Proposals in u-space (full & block) with step scaling ===
-def full_proposal(u, L, step_scale=1.0):
+def make_beta_schedule(n_steps: int, warmup_frac: float = 0.35, beta0: float = 0.05) -> torch.Tensor:
     """
-    Random-walk proposal: u' = u + (step_scale * L) @ N(0, I).\
-    L: lower-triangular Cholesky of covariance in u-space.
-    step_scale: scalar multiplier for step size.
-    Used for simultaneous updates of all parameters.
+    Linear ramp beta0 -> 1 over warmup portion; then stays at 1.
     """
+    n_warm = max(1, int(warmup_frac * n_steps))
+    betas = torch.ones(n_steps, dtype=torch.float32)
+    betas[:n_warm] = torch.linspace(float(beta0), 1.0, n_warm)
+    return betas
+
+
+# ============================================================
+# Proposals in u-space
+# ============================================================
+
+def full_proposal(u: torch.Tensor, L: torch.Tensor, step_scale: float = 1.0) -> torch.Tensor:
     z = torch.randn_like(u)
     return u + (L * step_scale) @ z
 
-def block_proposal_u(u, L, update_idx, step_scale=1.0):
-    """
-    Block/coordinate proposal on indices update_idx (or full if None).
-    Used to only update a subset of parameters per MCMC step.
-    """
-    if update_idx is None or len(update_idx) == 0:  # None or empty -> full update
-        return full_proposal(u, L, step_scale)
-
-    up  = u.clone()
-    idx = torch.as_tensor(update_idx, device=u.device, dtype=torch.long)
-    Lb  = L.index_select(0, idx).index_select(1, idx)    # (k,k)
-    zb  = torch.randn(idx.numel(), device=u.device)      # (k,)
-    up[idx] = up[idx] + (Lb * step_scale) @ zb           # (k,)
-    return up
-
-# Create a mixture proposal to help escape stickiness 
-def propose_mixture(u, L, update_idx=None, small=0.8, big=2.0, p_big=0.12):
-    """
-    Mixture-of-scales proposal:
-      with prob (1 - p_big): step_scale = small
-      with prob p_big:       step_scale = big
-    """
+def propose_mixture(
+    u: torch.Tensor,
+    L: torch.Tensor,
+    small: float = 0.8,
+    big: float = 2.0,
+    p_big: float = 0.12,
+) -> torch.Tensor:
     step_scale = big if (torch.rand((), device=u.device) < p_big) else small
-    return block_proposal_u(u, L, update_idx, step_scale=step_scale)
+    return full_proposal(u, L, step_scale=step_scale)
 
-# === Adapt in u-space ===
-def adapt_covariance_u(u_history,
-                       epsilon=1e-3,
-                       min_samples=100,
-                       fill_std=1e-2,
-                       max_jitter_tries=6,
-                       output_dir=None):
+
+# ============================================================
+# Log-posterior in u-space
+# ============================================================
+
+def make_logposterior_u_annealed(dataset, prior: LogNormalPrior, betas: torch.Tensor, debug: bool = False):
     """
-    Return lower-triangular Cholesky L for a proposal in u-space.
-    u_history: (N,d) tensor/ndarray of past u-samples.
+    dataset: your TimeSeriesInferenceDataset-like object with:
+        dataset.loglike(theta_phys) -> scalar Tensor
     """
-    # --- to tensor
-    if isinstance(u_history, np.ndarray):
-        u_history = torch.from_numpy(u_history)
-    u_history = u_history.detach().to(torch.float32)
+    def logposterior_u(u: torch.Tensor, i: int) -> torch.Tensor:
+        theta = to_theta(u)  # theta_phys
+        if torch.any(theta <= 0) or torch.any(~torch.isfinite(theta)):
+            return torch.tensor(-float("inf"), device=u.device)
 
-    device = u_history.device
-    N, d = u_history.shape
+        lp = prior.log_prob(theta)
+        ll = dataset.loglike(theta)
+        jac = logabsdet_J_exp(u)
+        beta = betas[i]
 
-    # --- remove non-finite rows
-    mask_finite = torch.isfinite(u_history).all(dim=1)
-    uh = u_history[mask_finite]
+        if debug:
+            print(f"[i={i}] beta={float(beta):.4f} theta={theta.detach().cpu().numpy()} lp={float(lp)} ll={float(ll)} jac={float(jac)}")
 
-    # --- if nothing/too little is finite, synthesize around 0 with floor std
-    if uh.shape[0] == 0:
-        uh = torch.zeros((1, d), dtype=torch.float32, device=device)
+        if (not torch.isfinite(lp)) or (not torch.isfinite(ll)):
+            return torch.tensor(-float("inf"), device=u.device)
 
-    # --- compute per-dim std on the finite part (fallback to fill_std)
-    with torch.no_grad():
-        mu = uh.mean(dim=0)
-        if uh.shape[0] < 2:
-            sd = torch.full((d,), fill_std, device=device)
-        else:
-            sd = uh.std(dim=0, unbiased=True)
-        sd = torch.where(torch.isfinite(sd), sd, torch.zeros_like(sd))
-        sd = torch.clamp(sd, min=fill_std)
+        return lp + beta * ll + jac
 
-    # --- ensure at least min_samples rows by prefilling around mean
-    if uh.shape[0] < min_samples:
-        need = min_samples - uh.shape[0]
-        extra = mu + sd * torch.randn((need, d), device=device, dtype=uh.dtype)
-        uh = torch.vstack([uh, extra])
-
-    # --- covariance in float64, then scale + regularize
-    uh64 = uh.to(torch.float64)
-    cov = torch.cov(uh64.T)  # (d,d), unbiased N-1 normalization
-    cov = 0.5 * (cov + cov.T)  # symmetrize
-
-    scaling = (2.4 ** 2) / float(d)  
-
-    diag_cov = torch.diag(cov)
-    med = torch.median(torch.clamp(diag_cov, min=1e-16)).item()
-    base_eps = max(epsilon, 1e-6 * med)   # to make sure step size doesn't collapse
-
-    C = scaling * cov + base_eps * torch.eye(d, dtype=torch.float64, device=device)
-
-    # clamp tiny/negative diag and jitter escalations
-    diag = torch.diag(C).clone()
-    diag = torch.clamp(diag, min=max(1e-12, 1e-4 * med))
-    C[range(d), range(d)] = diag
-
-    eye = torch.eye(d, dtype=torch.float64, device=device)
-    for i in range(max_jitter_tries):
-        try:
-            L = torch.linalg.cholesky(C)
-            return L.to(dtype=u_history.dtype, device=device)
-        except RuntimeError:
-            jitter = (10.0 ** i) * max(1e-12, 1e-4 * med)
-            C = C + jitter * eye # add jitter until Cholesky works
-
-    # final fallback: diagonal proposal
-    C = torch.diag(torch.clamp(torch.diag(C), min=max(1e-10, 1e-6 * med)))
-    L = torch.linalg.cholesky(C)
-    return L.to(dtype=u_history.dtype, device=device)
+    return logposterior_u
 
 
-# === Sampler state ===
-class SamplerState:
-    def __init__(self, L, iter_num=0):
-        self.L = L
-        self.iter = iter_num
-    def state_dict(self):
-        return {'L': self.L, 'iter': self.iter}
-    def load_state_dict(self, state):
-        self.L = state['L']
-        self.iter = state['iter']
-
-
-# === Single MH step in u-space ===
-def next_MCMC_sample_u(logposterior_u, u, lp_u, state,
-                       greedy=False, adapt=False, u_history=None,
-                       output_dir=None, update_idx=None,
-                       proposal_small=0.8, proposal_big=2.0, proposal_p_big=0.12):
-    """
-    One MH step with state carried in u-space.
-    Uses a mixture-of-scales random-walk proposal in u.
-      - proposal_small: typical (small) step scale (multiplies Cholesky L)
-      - proposal_big:   occasional larger step scale
-      - proposal_p_big: probability of taking the big step
-    Returns (u_next, lp_u_next, state, accepted_bool)
-    """
-    state.iter += 1
-
-    # optional covariance adaptation
-    if adapt and (u_history is not None):
-        state.L = adapt_covariance_u(u_history, output_dir=output_dir)
-
-    state.L = state.L.to(dtype=u.dtype, device=u.device)
-
-    # propose
-    up = propose_mixture(u, state.L, update_idx=update_idx,
-                        small=proposal_small, big=proposal_big, p_big=proposal_p_big)
-
-    # log-posterior at proposal
-    lp_up = logposterior_u(up)
+@torch.no_grad()
+def next_mh_step_annealed(
+    logposterior_u,
+    u: torch.Tensor,
+    lp_u: torch.Tensor,
+    i: int,
+    L: torch.Tensor,
+    proposal_small: float = 0.8,
+    proposal_big: float = 2.0,
+    proposal_p_big: float = 0.12,
+) -> Tuple[torch.Tensor, torch.Tensor, bool]:
+    up = propose_mixture(u, L, small=proposal_small, big=proposal_big, p_big=proposal_p_big)
+    lp_up = logposterior_u(up, i)
     if not torch.isfinite(lp_up):
-        return u, lp_u, state, False
+        return u, lp_u, False
 
-    # accept / reject
-    if greedy:
-        accept = (lp_up > lp_u).item()
-    else:
-        logu = torch.log(torch.rand((), device=u.device))
-        accept = (logu < (lp_up - lp_u)).item()
+    logu = torch.log(torch.rand((), device=u.device))
+    accept = (logu < (lp_up - lp_u)).item()
 
     if accept:
-        return up, lp_up, state, True
+        return up, lp_up, True
+    return u, lp_u, False
+
+
+# ============================================================
+# Runner + checkpointing
+# ============================================================
+
+@dataclass
+class MCMCConfig:
+    n_steps: int = 50_000
+    warmup_frac: float = 0.35
+    beta0: float = 0.05
+
+    prior_frac_error: float = 0.7
+    prior_min_logstd: float = 1e-2
+
+    init_step_u: float = 0.15
+    proposal_small: float = 0.8
+    proposal_big: float = 2.0
+    proposal_p_big: float = 0.12
+
+    save_every: int = 1000
+    out_dir: str = "mcmc_out"
+    run_name: str = "chain"
+
+    # If True, store u + logpost to disk as we go (recommended for long runs)
+    checkpoint: bool = True
+
+
+def _default_device(device: Union[str, torch.device]) -> torch.device:
+    d = torch.device(device)
+    if d.type == "cuda" and not torch.cuda.is_available():
+        return torch.device("cpu")
+    return d
+
+
+def checkpoint_paths(out_dir: str, run_name: str) -> Tuple[str, str]:
+    os.makedirs(out_dir, exist_ok=True)
+    ckpt_path = os.path.join(out_dir, f"{run_name}.pt")
+    tmp_path = os.path.join(out_dir, f"{run_name}.tmp.pt")
+    return ckpt_path, tmp_path
+
+
+def save_checkpoint_atomic(path: str, tmp_path: str, payload: Dict[str, Any]) -> None:
+    torch.save(payload, tmp_path)
+    os.replace(tmp_path, path)
+
+
+def load_checkpoint(path: str, map_location: Optional[Union[str, torch.device]] = "cpu") -> Dict[str, Any]:
+    return torch.load(path, map_location=map_location)
+
+
+def run_mcmc_annealed(
+    dataset,
+    theta0_phys: Sequence[float],
+    config: Optional[MCMCConfig] = None,
+    device: Union[str, torch.device] = "cuda",
+    resume_from: Optional[str] = None,
+    debug: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor, float, str]:
+    """
+    Returns:
+      thetas_cpu: (n_saved, d) tensor on CPU
+      logpost_cpu: (n_saved,) tensor on CPU
+      accept_rate: float
+      ckpt_path: where the latest checkpoint is saved
+    """
+    if config is None:
+        config = MCMCConfig()
+
+    device = _default_device(device)
+
+    ckpt_path, tmp_path = checkpoint_paths(config.out_dir, config.run_name)
+
+    # --- initialize or resume
+    if resume_from is not None:
+        ck = load_checkpoint(resume_from, map_location="cpu")
+        start_i = int(ck["i_next"])
+        us = ck["u"].clone()              # CPU
+        lps = ck["logpost"].clone()       # CPU
+        acc = int(ck["acc"])
+        theta_dim = int(us.shape[1])
+
+        u = us[-1].to(device=device, dtype=torch.float32)
+        lp_u = lps[-1].to(device=device, dtype=torch.float32)
+
+        theta0 = torch.exp(us[0]).to(device=device, dtype=torch.float32)  # for metadata only
     else:
-        return u, lp_u, state, False
+        start_i = 0
+        theta0 = torch.as_tensor(theta0_phys, dtype=torch.float32, device=device).clamp_min(1e-12)
+        theta_dim = int(theta0.numel())
+
+        us = torch.empty((0, theta_dim), dtype=torch.float32, device="cpu")
+        lps = torch.empty((0,), dtype=torch.float32, device="cpu")
+        acc = 0
+
+        u = to_u(theta0)
+        lp_u = None  # set below after logpost defined
+
+    # --- prior + betas (must be identical if resuming; we store config in ckpt)
+    prior = make_lognormal_prior_centered(
+        center_theta=theta0.detach().cpu(),
+        frac_error=config.prior_frac_error,
+        min_logstd=config.prior_min_logstd,
+    ).to(device)
+
+    betas = make_beta_schedule(config.n_steps, warmup_frac=config.warmup_frac, beta0=config.beta0).to(device)
+
+    logpost_u = make_logposterior_u_annealed(dataset, prior, betas, debug=debug)
+
+    if lp_u is None:
+        lp_u = logpost_u(u, 0)
+
+    # --- proposal Cholesky (diagonal)
+    L = torch.eye(theta_dim, device=device, dtype=torch.float32) * float(config.init_step_u)
+
+    # --- storage preallocation (on CPU, append in chunks)
+    # We keep simple append-to-list semantics with occasional concatenation.
+    u_list = [us] if us.numel() else []
+    lp_list = [lps] if lps.numel() else []
+
+    for i in range(start_i, config.n_steps):
+        u, lp_u, accepted = next_mh_step_annealed(
+            logposterior_u=logpost_u,
+            u=u,
+            lp_u=lp_u,
+            i=i,
+            L=L,
+            proposal_small=config.proposal_small,
+            proposal_big=config.proposal_big,
+            proposal_p_big=config.proposal_p_big,
+        )
+        acc += int(accepted)
+
+        u_list.append(u.detach().cpu().reshape(1, -1))
+        lp_list.append(lp_u.detach().cpu().reshape(1))
+
+        # checkpoint
+        if config.checkpoint and config.save_every > 0:
+            if ((i + 1) % config.save_every == 0) or ((i + 1) == config.n_steps):
+                u_cat = torch.cat(u_list, dim=0)
+                lp_cat = torch.cat(lp_list, dim=0)
+
+                payload = {
+                    "u": u_cat,
+                    "logpost": lp_cat,
+                    "acc": acc,
+                    "i_next": i + 1,
+                    "config": asdict(config),
+                }
+                save_checkpoint_atomic(ckpt_path, tmp_path, payload)
+
+    # final concat
+    u_cat = torch.cat(u_list, dim=0)
+    lp_cat = torch.cat(lp_list, dim=0)
+    thetas = torch.exp(u_cat)
+
+    accept_rate = acc / float(config.n_steps)
+    return thetas, lp_cat, accept_rate, ckpt_path
