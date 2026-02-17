@@ -3,7 +3,7 @@ run_mcmc.py
 Experiment-specific driver for annealed MH MCMC.
 """
 
-import os
+import os, argparse
 import numpy as np
 import torch
 
@@ -25,7 +25,7 @@ def main():
     cutoff = 300
 
     KAPPA_NPZ = "kappa_samples_Exp1_4gauss.npz"
-    N_KAPPA = 256        # fixed CRN size; None = use all
+    N_KAPPA = None        # fixed CRN size; None = use all
     KAPPA_SEED = 0
 
     theta0 = [0.05, 0.5, 0.12]  # alpha, mu, d
@@ -58,8 +58,8 @@ def main():
     # -----------------------
     basename = os.path.splitext(os.path.basename(REAL_DATA_PATH))[0]
     config = MCMCConfig(
-        n_steps=50_000,
-        warmup_frac=0.35,
+        n_steps=5_000,
+        warmup_frac=0.1,
         beta0=0.05,
         prior_frac_error=0.7,
         init_step_u=0.15,

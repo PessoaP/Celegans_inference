@@ -32,7 +32,7 @@ cd "$SCRATCH_RUN_DIR"
 export PYTHONPATH=$PWD:$PYTHONPATH
 
 # === Inputs ===
-DATA_PATH="synthetic_data/synthetic_data.csv"
+DATA_PATH="synthetic_data/synthetic_data_TL_seed10.csv"
 KAPPA_NPZ="synthetic_data/kappa_samples_Exp1_4gauss.npz"
 
 # One job, one GPU, no slicing

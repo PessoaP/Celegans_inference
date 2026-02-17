@@ -12,7 +12,7 @@ from utils.simulator import sample
 # =========================
 
 # Output
-OUT_CSV = "synthetic_data/synthetic_data.csv"
+OUT_CSV = "synthetic_data/synthetic_data_maxloglikeparams.csv"
 
 # Simulation design
 WORMS_PER_DAY = 75
@@ -20,9 +20,9 @@ DAYS = torch.tensor([1, 3, 5, 7, 9], dtype=torch.int64)  # in days; code convert
 
 # Forward-model params (alpha, mu, d are scalars; kappa comes from distribution)
 
-ALPHA = 0.05
-MU = 0.5
-D = 0.12
+ALPHA = 0.04
+MU = 1.0
+D = 0.6153846153846154*MU
 
 # Kappa distribution file
 KAPPA_NPZ = "synthetic_data/kappa_samples_Exp1_4gauss.npz"
