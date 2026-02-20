@@ -2,7 +2,7 @@
 
 import numpy as np
 
-def stratified_sample_from_pmf_N(p: np.ndarray, Nsamples: int, J: int, seed: int = 0) -> np.ndarray:
+def stratified_sample_from_pmf_N(p: np.ndarray, Nsamples: int, J: int, seed: int = 0, kappa_cutoff: int = 1000) -> np.ndarray:
     """
     Draw Nsamples indices from discrete pmf p using stratification in CDF space.
 
@@ -14,6 +14,7 @@ def stratified_sample_from_pmf_N(p: np.ndarray, Nsamples: int, J: int, seed: int
     """
     rng = np.random.default_rng(seed)
     p = np.asarray(p, dtype=np.float64)
+    p *= np.arange(len(p)) > kappa_cutoff  # zero out small capacities
     p = p / p.sum()
 
     if Nsamples % J != 0:
