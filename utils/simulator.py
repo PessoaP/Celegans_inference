@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 
+
 """
 simulator.py
 
@@ -32,6 +33,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # This file assumes all stochastic simulation is run on that same device.
 S = torch.tensor((1, 1, -1, -1),device=device).int()
 
+@torch.jit.script
 def get_rates(E, params):
     """
     Compute vector of reaction rates for each system.
@@ -48,7 +50,11 @@ def get_rates(E, params):
     """
     # Ensure E and params are on same device
     E = E.to(params.device)
-    alpha, mu_E, k, dell = params
+    #alpha, mu_E, k, dell = params
+    alpha = params[0]
+    mu_E  = params[1]
+    k     = params[2]
+    dell  = params[3]
     rates = torch.stack((alpha,
                          mu_E * E,
                         ((mu_E-dell) / k) * E * E,
@@ -56,17 +62,21 @@ def get_rates(E, params):
     return rates
 
 
+@torch.jit.script
 def ez_sample_exp(rates):
     # Sample exponential waiting times for given reaction rates.
     U = torch.rand_like(rates)
     return -torch.log(U) / (rates)
 
+
+@torch.jit.script
 def ez_sample_poisson(r):
     # Sample from Poisson distribution for given rate array.
     return torch.poisson(r)
 
 
-def Gillespie_step(params, E, dt_max):
+@torch.jit.script
+def Gillespie_step(params, E, dt_max,S=S):
     """
     One Gillespie step for systems below E threshold.
     Parameters
@@ -83,7 +93,8 @@ def Gillespie_step(params, E, dt_max):
     """
     rates = get_rates(E, params)
     dt_prop = ez_sample_exp(rates)
-    dt, reacts = dt_prop.min(axis=1)
+
+    dt, reacts = dt_prop.min(dim=1)
 
     change = dt < dt_max
     dt[~change] = dt_max[~change]
@@ -92,7 +103,9 @@ def Gillespie_step(params, E, dt_max):
     dE[change] += S[reacts][change]
     return dt, dE
 
-def tau_leap(params, E, dt_max, dt_min=0.): # currently say minimum dt = 0.1 min = 0.1/60 hours
+
+@torch.jit.script
+def tau_leap(params, E, dt_max,S=S):
     """
     One tau-leap step for high E systems.
     Parameters
@@ -108,23 +121,26 @@ def tau_leap(params, E, dt_max, dt_min=0.): # currently say minimum dt = 0.1 min
     rates = get_rates(E, params) 
 
     # Compute the expected net change in total entity count per unit time
-    exp_change = torch.abs((rates*S).sum(axis=1))
+    exp_change = torch.abs((rates*S).sum(dim=1))
     exp_change = exp_change.clamp_min(1e-12)
     # Choose dt such that the expected *net* change in E during dt is approximately E / 100
     dt = (E / 101) / exp_change
 
     # enforce min and max
-    dt = dt.clamp(min=dt_min, max=0.1)
+    dt = dt.clamp(max=0.1)
 
     # also respect dt_max
     dt = torch.minimum(dt, dt_max)
 
     num_reac = ez_sample_poisson(rates * dt[:, None])
-    dE = (num_reac * S).sum(axis=1).int()
+    dE = (num_reac * S).sum(dim=1).int()
 
     return dt, dE
 
-def step(params, E, t0, T, E_tol=250):
+E_tol=250*torch.ones(1, device=device) # Threshold to switch between SSA and tau-leap
+
+@torch.jit.script
+def step(params, E, t0, T, E_tol=E_tol):
     """
     Single adaptive step (Gillespie or tau-leap depending on E).
     Parameters
@@ -163,6 +179,7 @@ def step(params, E, t0, T, E_tol=250):
     E_new = torch.clamp(E + dE, min=0)  # Ensure E doesn't go negative
 
     return t0 + dt, E_new
+
 
 def sample(params, E_initial=None, T=48, N=None, 
            device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
@@ -224,7 +241,6 @@ def sample(params, E_initial=None, T=48, N=None,
 
     while torch.any(t < T):
         t, E = step(params, E, t, T)
-        
 
     return t, E
 
