@@ -3,14 +3,14 @@
 #SBATCH -N 1
 #SBATCH -c 4
 #SBATCH --mem=64G
-#SBATCH -t 0-00:10:00
+#SBATCH -t 0-167:00:00
 
 #SBATCH -p public
 #SBATCH -q public
 #SBATCH -G a100:1
 
-#SBATCH -o /scratch/ppessoa/logs/capacity_day9/slurm.%j.out
-#SBATCH -e /scratch/ppessoa/logs/capacity_day9/slurm.%j.err
+#SBATCH -o /scratch/ppessoa/logs/MCMC/slurm.%j.out
+#SBATCH -e /scratch/ppessoa/logs/MCMC/slurm.%j.err
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ppessoa@asu.edu
 #SBATCH --export=NONE
