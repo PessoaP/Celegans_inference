@@ -7,7 +7,6 @@ import pandas as pd
 
 from utils.dataclass import TimeSeriesInferenceDataset
 from utils.load_and_clean_real_data import load_and_clean_real_data
-
 from utils.mcmc import logprior, loglike_alpha_mu_omega, next_MCMC_sample
 
 
@@ -63,9 +62,8 @@ logposterior = lambda th: loglike_alpha_mu_omega(dataset, *th) + logprior(*th)
 
 start = grid_estimation.clone()
 theta = start
-for i in range(4):
-    lp = logposterior(theta)
-    print(lp)
+lp = logposterior(theta)
+
 
 
 # %%
