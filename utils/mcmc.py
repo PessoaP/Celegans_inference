@@ -18,10 +18,10 @@ def beta_logpdf(x, a, b):
     return (a - 1) * torch.log(x) + (b - 1) * torch.log(1 - x) - logB
     
 
-gamma_shape_alpha=5*torch.ones(1, device=device)  
-gamma_rate_alpha=1.0*torch.ones(1, device=device) 
-gamma_shape_mu=5*torch.ones(1, device=device) 
-gamma_rate_mu=1.0*torch.ones(1, device=device) 
+gamma_shape_alpha=2*torch.ones(1, device=device)  
+gamma_rate_alpha=.1*torch.ones(1, device=device) 
+gamma_shape_mu=2*torch.ones(1, device=device) 
+gamma_rate_mu=.1*torch.ones(1, device=device) 
 beta_a=1.5*torch.ones(1, device=device) 
 beta_b=1.5*torch.ones(1, device=device)
 
