@@ -40,7 +40,7 @@ dils   = torch.tensor(df["Dilution"].values)
 
 kappa_np = np.load("kappa_samples_stratified.npz")["kappa_samples"]
 kappa_np.sort()
-kappa_np = kappa_np[np.arange(len(kappa_np)) % 2 == 0]
+kappa_np = kappa_np[np.arange(len(kappa_np)) % 32 == 0]
 
 dataset = TimeSeriesInferenceDataset(
     ts=ts, counts=counts, dils=dils,
