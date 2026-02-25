@@ -38,7 +38,7 @@ ts     = torch.tensor(df["Day"].values * 24)
 counts = torch.tensor(df["Counts"].values)
 dils   = torch.tensor(df["Dilution"].values)
 
-kappa_np = np.load("kappa_samples_stratified.npz")["kappa_samples"]
+kappa_np = np.load("kappa_samples_stratified_dropleq1000.npz")["kappa_samples"]
 kappa_np.sort()
 kappa_np = kappa_np[np.arange(len(kappa_np)) % 32 == 0]
 
