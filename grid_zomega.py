@@ -44,7 +44,7 @@ def main():
     counts = torch.tensor(df["Counts"].values)
     dils   = torch.tensor(df["Dilution"].values)
 
-    kappa_np = np.load("kappa_samples_stratified.npz")["kappa_samples"]
+    kappa_np = np.load("kappa_samples_stratified_dropleq1000.npz")["kappa_samples"]
     print(f"Loaded {len(kappa_np)} kappa samples from .npz file")
 
     dataset = TimeSeriesInferenceDataset(
