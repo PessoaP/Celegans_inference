@@ -924,7 +924,7 @@ if __name__ == "__main__":
 #   --truth "alpha=0.05,mu=0.5,omega=0.24"
 
 # python visualize_contours_marginals.py \
-#   --csv recovery_tests/grid_Exp1/grid_loglike_Exp1_full.csv \
+#   --csv recovery_tests/Exp1_new/grid_loglike_Exp1_full.csv \
 #   --vars alpha,mu,omega \
 #   --y-window 100 \
 #   --ll-window 100 \

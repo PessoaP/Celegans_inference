@@ -10,8 +10,8 @@
 #SBATCH -p public
 #SBATCH -q public
 
-#SBATCH --array=1-4
-#SBATCH -G a30:1
+#SBATCH --array=1-2
+#SBATCH -G a100:1
 
 #SBATCH -o /scratch/cylu1/logs/grid_likelihood/slurm.%A_%a.out
 #SBATCH -e /scratch/cylu1/logs/grid_likelihood/slurm.%A_%a.err
@@ -53,4 +53,4 @@ OUTDIR=~/grid_likelihood_runs/$BASENAME_NOEXT/${SLURM_ARRAY_JOB_ID}/${SLURM_ARRA
 mkdir -p "$OUTDIR"
 
 cp -rv "grid_likelihood_outputs/$BASENAME_NOEXT" "$OUTDIR"/
-cp -v "kappa_samples_Exp1_4gauss.npz" "$OUTDIR"/
+cp -v "kappa_samples_stratified_dropleq1000.npz" "$OUTDIR"/

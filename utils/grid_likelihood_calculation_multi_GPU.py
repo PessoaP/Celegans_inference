@@ -66,7 +66,7 @@ def main():
     counts = torch.tensor(df["Counts"].values)
     dils   = torch.tensor(df["Dilution"].values)
 
-    kappa_np = np.load("kappa_samples_Exp1_4gauss.npz")["kappa_samples"]
+    kappa_np = np.load("kappa_samples_stratified_dropleq1000.npz")["kappa_samples"]
 
     dataset = TimeSeriesInferenceDataset(
         ts=ts, counts=counts, dils=dils,
@@ -78,9 +78,10 @@ def main():
     )
 
     # --- define grid ---
-    alphas = np.linspace(0, 1/4, 26)[1:-1]   # 24
-    mus    = np.linspace(0, 1,   26)[1:]     # 25
-    omegas = np.linspace(0, 1,   27)[1:-1]
+    alphas_full = np.linspace(0, 1/4, 26)[1:-1]   # 24
+    alphas = alphas_full[:12] # job 1
+    mus    = np.linspace(0, 2,   51)[1:]     # 50
+    omegas = np.linspace(0, 1,   27)[1:-1]   # 25
 
     # --- split alphas by array task ---
     a_start, a_end = chunk_indices(len(alphas), args.num_tasks, task_idx0)

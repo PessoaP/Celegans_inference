@@ -475,7 +475,7 @@ if __name__ == "__main__":
 # python visualize_marginal_likelihoods_fullgrid.py \
 #   --csv recovery_tests/grid_Exp1/grid_loglike_Exp1_full.csv \
 #   --vars alpha,mu,omega \
-#   --ll-window 30
+#   --ll-window 100
 #
 # With ground truth:
 # python visualize_marginal_likelihoods_fullgrid.py \
