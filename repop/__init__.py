@@ -78,7 +78,7 @@ def dils_switch(dils, N, cutoff):
         # For each dilution factor, evaluate log-likelihood over grid of (k, n)
         # This yields a matrix where columns correspond to values of n, for each k
         binomial_logZ = torch.clamp(torch.logsumexp(counts_loglike(k, n, d), axis=0), max=0)
-
+   
         logZdils.append(binomial_logZ)
         pdils.append(binomial_logZ + lp_antes)
         lp_antes += logm1exp(binomial_logZ)
@@ -103,10 +103,10 @@ def get_lpkdil_n(counts, dils, n, cutoff, Nmax):
     if cutoff == -1:
         return counts_loglike(counts, n, dils)
     else:
-        lpk_diln_unnorm = counts_loglike(counts, n, dils)
-        logZ, lpdil_n = dils_switch(dils, Nmax, cutoff)
+        lpk_diln_unnorm = counts_loglike(counts.cpu(), n.cpu(), dils.cpu())
+        logZ, lpdil_n = dils_switch(dils.cpu(), Nmax, cutoff)
         lpk_diln = lpk_diln_unnorm - logZ + lpdil_n
-        return lpk_diln
+        return lpk_diln.to(torch.float32).to(n.device)
 
 # The dataset class encapsulates the data along with methods for estimating and reconstructing
 # the underlying bacterial population distribution from plate counts.
