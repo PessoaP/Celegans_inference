@@ -20,25 +20,68 @@
 module purge
 module load cuda-12.6.1-gcc-12.1.0
 module load mamba/latest
-source activate repopgraphing
 
-# === Set Up Scratch Directory ===
-export SCRATCH_RUN_DIR=/scratch/ppessoa/recovery_2d_${SLURM_JOB_ID}
-mkdir -p "$SCRATCH_RUN_DIR"
-cp -r ~/Celegans_inference_grid/* "$SCRATCH_RUN_DIR"/
-cd "$SCRATCH_RUN_DIR"
 
-# === Ensure local imports work ===
-export PYTHONPATH=$PWD:$PYTHONPATH
 
-# python grid_zomega.py real_data/Exp_1_live_lowpH.csv
+# python run_grid.py real_data/Exp_1_live_lowpH.csv \
+#   --alpha 0.05 \
+#   --mu 0:3 \
+#   --omega 0 \
+#   --rho 1 \
+#   --kappa-samples-path kappa_samples_stratified_lowpH.npz
 
-python grid_zomega.py real_data/Exp_2_reduced_live_lowpH.csv 
 
-python grid_zomega.py real_data/Exp_3_time-limited_lowpH.csv \
+# python run_grid.py real_data/Exp_2_time-limited_lowpH.csv \
+#   --alpha 0.05 \
+#   --mu 0:3 \
+#   --omega 0 \
+#   --rho 0:1 \
+#   --t-switch 0.0 \
+#   --kappa-samples-path kappa_samples_stratified_lowpH.npz
+
+#   python run_grid.py real_data/Exp_3_time-limited_lowpH.csv \
+#   --alpha 0.05 \
+#   --mu 0:3 \
+#   --omega 0 \
+#   --rho 0:1 \
+#   --t-switch 24.0 \
+#   --kappa-samples-path kappa_samples_stratified_lowpH.npz
+
+python run_grid.py real_data/Exp_4_live_highpH.csv \
+  --alpha 0.05 \
+  --mu 0:3 \
+  --omega 0 \
+  --rho 1 \
+  --kappa-samples-path kappa_samples_stratified_highpH.npz
+
+  python run_grid.py real_data/Exp_5_time-limited_highpH.csv \
+  --alpha 0.05 \
+  --mu 0:3 \
+  --omega 0 \
+  --rho 0:1 \
+  --t-switch 0.0 \
+  --kappa-samples-path kappa_samples_stratified_highpH.npz
+
+  python run_grid.py real_data/Exp_6_BB_time-limited_highpH.csv \
+  --alpha 0.05 \
+  --mu 0:3 \
+  --omega 0 \
+  --rho 0:1 \
   --t-switch 24.0 \
-  --rho 0.1
+  --kappa-samples-path kappa_samples_stratified_highpH.npz
 
-python grid_zomega.py real_data/Exp_3_time-limited_lowpH.csv \
-  --t-switch 24.0 \
-  --rho 0.1
+#   python run_grid.py real_data/Exp_7_low-salinity_time-limited.csv \
+#   --alpha 0.04 \
+#   --mu 0:3 \
+#   --omega 0 \
+#   --rho 0:1 \
+#   --t-switch 24.0 \
+#   --kappa-samples-path kappa_samples_stratified_highpH.npz
+
+#   python run_grid.py real_data/Exp_8_BB_low-salinity_time-limited.csv \
+#   --alpha 0.04 \
+#   --mu 0:3 \
+#   --omega 0 \
+#   --rho 0:1 \
+#   --t-switch 24.0 \
+#   --kappa-samples-path kappa_samples_stratified_highpH.npz
