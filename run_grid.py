@@ -32,9 +32,9 @@ def expand(x, n: int, purge_zeros=False):
     if isinstance(x, tuple):
         lo, hi = x
         if purge_zeros and lo<=0:
-            ans = np.linspace(lo, hi, n+1)
+            ans = np.linspace(lo, hi, n+1).round(8)
             return ans[ans > 0.0]
-        return np.linspace(lo, hi, n+1)
+        return np.linspace(lo, hi, n+1).round(8)
     return np.array([float(x)], dtype=float)
 
 def main():
@@ -56,6 +56,9 @@ def main():
     p.add_argument("--t-switch", type=float, default=None,
                    help="time (hours) when feeding stops / regime switches. None = no switch")
 
+    p.add_argument("--kappa-samples-path", type=str,
+                   help="Path to .npz file containing kappa samples")
+    
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -114,7 +117,7 @@ def main():
             ll = dataset.loglike(alpha, mu, omega, rho)
         ll_val = float(ll.detach().cpu())
 
-        dic.append({"idx": i, "alpha": alpha, "mu": mu, "omega": omega, "loglike": ll_val})
+        dic.append({"idx": i, "alpha": alpha, "mu": mu, "omega": omega, "rho": rho, "loglike": ll_val})
 
         if (i+1) % flush_every == 0:
             pd.DataFrame(dic).to_csv(out_path, index=False)
