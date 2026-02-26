@@ -51,7 +51,8 @@ def reconstruct_top_components(dt, top_n=4, narray=None, cpu=True, **kwargs):
 
 
 # Load data from only Day 9 from selected real data CSVs
-capacity_calibrating_datasets = ["real_data/Exp_4_live_highpH.csv"] #["real_data/Exp_1_live_lowpH.csv"]
+capacity_calibrating_datasets = ["real_data/Exp_4_live_highpH.csv"] 
+#capacity_calibrating_datasets = ["real_data/Exp_1_live_lowpH.csv"]
 
 df_day9 = load_and_pool_real_data(
     filepaths=capacity_calibrating_datasets,  # load in selected CSVs
@@ -85,4 +86,5 @@ x = x.reshape(-1).detach().cpu().numpy()
 p = p.reshape(-1).detach().cpu().numpy()
 p = p / p.sum()
 
-np.savez("capacity_day9_repop_precalibration_highpH.npz", kappa=x, p=p)
+np.savez("capacity_day9_highpH.npz", kappa=x, p=p)
+#np.savez("capacity_day9_repop_precalibration_lowpH.npz", kappa=x, p=p)

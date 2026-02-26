@@ -4,7 +4,9 @@ from utils import simulator
 from tqdm import tqdm
 
 class TimeSeriesInferenceDataset():
-    def __init__(self, ts, counts, dils, kappa_samples, cutoff=300, rho=1.0, t_switch=None,
+    def __init__(self, ts, counts, dils, 
+                 kappa_samples, 
+                 cutoff=300, t_switch=None,
                  device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
         self.device = device
         
@@ -16,7 +18,6 @@ class TimeSeriesInferenceDataset():
         self.counts = to_device_tensor(counts)
         self.dils   = to_device_tensor(dils)
         self.Ts     = to_device_tensor(ts)
-        self.rho = float(rho)
         self.t_switch = None if t_switch is None else float(t_switch)
 
         # --- Store fixed capacity samples (Day-9 learned) ---
@@ -31,7 +32,7 @@ class TimeSeriesInferenceDataset():
         self.cutoff = cutoff
 
         self.lpkdil_n = repop.get_lpkdil_n(self.counts, self.dils, self.n,
-                                        cutoff, self.Nmax).to(self.device)
+                                           cutoff, self.Nmax).to(self.device)
 
         # Only here do we switch to the chosen device (GPU or CPU)
 
@@ -103,8 +104,8 @@ class TimeSeriesInferenceDataset():
             return torch.cat(lpkdil_list, dim=0)
         else:   
             return lpkdil_list
-    
-    def _build_params_with_capacity(self, theta_phys, rho_scale=1.0):
+
+    def _build_params_with_capacity(self, alpha, mu, omega, rho=1.0):
         '''
         Build per-trajectory parameter matrix with fixed per-worm capacity samples.
 
@@ -118,12 +119,18 @@ class TimeSeriesInferenceDataset():
         Returns:
             params: torch.Tensor shape (4, Nsamples) in simulator order [alpha, mu, k, d]
         '''
-        theta_phys = theta_phys.to(self.device).float().reshape(-1)
-        if theta_phys.numel() != 3:
-            raise ValueError("theta_phys must be [alpha, mu, d]")
+        alpha = torch.as_tensor(alpha, device=self.device, dtype=torch.float32)
+        mu    = torch.as_tensor(mu,    device=self.device, dtype=torch.float32)
+        omega = torch.as_tensor(omega, device=self.device, dtype=torch.float32)
 
-        alpha, mu, d = theta_phys[0], theta_phys[1], theta_phys[2]
-        alpha = alpha * float(rho_scale)
+        alpha = alpha * float(rho)
+        d = omega * mu
+
+        # theta_phys = torch.stack([alpha, mu, d])
+
+        # theta_phys = theta_phys.to(self.device).float().reshape(-1)
+        # if theta_phys.numel() != 3:
+        #     raise ValueError("theta_phys must be [alpha, mu, d]")
 
         k_vec = self.kappa_samples.to(self.device).float().reshape(-1)
         Nsamples = k_vec.numel()
@@ -136,7 +143,7 @@ class TimeSeriesInferenceDataset():
         return params
 
 
-    def loglike(self, theta_phys):
+    def loglike(self, alpha, mu, omega, rho=1.0):
         """
         Args:
             theta_phys: torch.Tensor shape (3,) = [alpha, mu, d]
@@ -149,19 +156,19 @@ class TimeSeriesInferenceDataset():
         Returns:
             Scalar log-likelihood estimate
         """
-        ns = self.simulate_for_likelihood(theta_phys)
+        ns = self.simulate_for_likelihood(alpha, mu, omega, rho)
         log_probs = self.lpkdil_ns(ns, reduce=True, concat=True)
         return torch.sum(log_probs)
 
 
-    def simulate_for_likelihood(self, theta_phys):
+    def simulate_for_likelihood(self, alpha, mu, omega, rho=1.0):
         times = self.times.to(self.device).reshape(-1)
         N = int(self.kappa_samples.numel())
         device = self.device
 
         # No switch
-        if (self.t_switch is None) or (self.rho == 1.0):
-            params = self._build_params_with_capacity(theta_phys, rho_scale=1.0)
+        if (self.t_switch is None) or (rho == 1.0):
+            params = self._build_params_with_capacity(alpha, mu, omega, rho=1.0)
             return simulator.sample_record(params=params, record_times=times, N=N, device=device)
 
         t0 = float(self.t_switch)
@@ -171,7 +178,7 @@ class TimeSeriesInferenceDataset():
         times_post = times[~mask_pre]   # >= t0
 
         # Stage 1: base alpha
-        params_pre = self._build_params_with_capacity(theta_phys, rho_scale=1.0)
+        params_pre = self._build_params_with_capacity(alpha, mu, omega, rho=1.0)
 
         snapshots_pre = []
         if times_pre.numel() > 0:
@@ -183,7 +190,7 @@ class TimeSeriesInferenceDataset():
         _, E_split = simulator.sample(params=params_pre, E_initial=None, T=t0, N=N, device=device)
 
         # Stage 2: scaled alpha
-        params_post = self._build_params_with_capacity(theta_phys, rho_scale=self.rho)
+        params_post = self._build_params_with_capacity(alpha, mu, omega, rho=rho)
 
         snapshots_post = []
         if times_post.numel() > 0:
@@ -192,13 +199,14 @@ class TimeSeriesInferenceDataset():
                 params=params_post, record_times=shifted, N=N, E_initial=E_split, device=device
             )
 
-        # Stitch
-        out = []
-        i_pre = 0
-        i_post = 0
-        for is_pre in mask_pre.tolist():
-            if is_pre:
-                out.append(snapshots_pre[i_pre]); i_pre += 1
-            else:
-                out.append(snapshots_post[i_post]); i_post += 1
-        return out
+        # # Stitch
+        # out = []
+        # i_pre = 0
+        # i_post = 0
+        # for is_pre in mask_pre.tolist():
+        #     if is_pre:
+        #         out.append(snapshots_pre[i_pre]); i_pre += 1
+        #     else:
+        #         out.append(snapshots_post[i_post]); i_post += 1
+        # return out
+        return snapshots_pre + snapshots_post #List stitch with an add operation 
