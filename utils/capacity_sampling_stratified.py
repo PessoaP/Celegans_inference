@@ -56,6 +56,28 @@ def draw_fixed_kappa_samples(npz_path: str, Nsamples: int, J: int, seed: int = 0
     idx = stratified_sample_from_pmf_N(p=p, Nsamples=Nsamples, J=J, seed=seed)
     return kappa[idx]
 
+# --- NEW: callable entrypoint for notebooks ---
+def run_sampling(capacity_npz: str, J: int, Nsamples: int = 2**15, seed: int = 0, out: str = None):
+    kappa_samples = draw_fixed_kappa_samples(
+        npz_path=capacity_npz,
+        Nsamples=Nsamples,
+        J=J,
+        seed=seed,
+    )
+
+    if out is not None:
+        np.savez(
+            out,
+            kappa_samples=kappa_samples,
+            J=J,
+            Nsamples=Nsamples,
+            seed=seed,
+        )
+        print(f"Saved {out} (n={len(kappa_samples)})")
+        return out
+
+    return kappa_samples
+
 
 if __name__ == "__main__":
     import os, argparse
@@ -73,27 +95,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    kappa_samples = draw_fixed_kappa_samples(
-        npz_path=args.capacity_npz,
-        Nsamples=args.Nsamples,
-        J=args.J,
-        seed=args.seed,
-    )
-
-    np.savez(
-        args.out,
-        kappa_samples=kappa_samples,
+    run_sampling(
+        capacity_npz=args.capacity_npz,
         J=args.J,
         Nsamples=args.Nsamples,
         seed=args.seed,
+        out=args.out,
     )
-
-    print(f"Saved {args.out} (n={len(kappa_samples)})")
-
-# How to run: 
-# python utils/capacity_sampling_stratified.py \
-#     --capacity_npz data/capacity_day9_repop_precalibration.npz \
-#     --J 128 \
-#     --Nsamples 32768 \
-#     --seed 0 \
-#     --out data/kappa_samples_stratified.npz
