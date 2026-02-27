@@ -59,6 +59,8 @@ def main():
     p.add_argument("--kappa-samples-path", type=str,
                    help="Path to .npz file containing kappa samples")
     
+    p.add_argument("--outfile", type=str, default="grid_zomega.csv")
+
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -102,7 +104,7 @@ def main():
     )
 
     # --- output file (single) ---
-    out_path = os.path.join(output_dir, "grid_zomega.csv")
+    out_path = os.path.join(output_dir, outfile)
 
     already_done = 0
     flush_every = 10
