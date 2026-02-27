@@ -104,7 +104,6 @@ def main():
     )
 
     # --- output file (single) ---
-    out_path = os.path.join(output_dir, outfile)
 
     already_done = 0
     flush_every = 10
