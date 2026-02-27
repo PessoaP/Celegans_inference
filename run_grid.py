@@ -103,6 +103,8 @@ def main():
         device=device,
     )
 
+    out_path = os.path.join(output_dir, args.outfile)
+
     # --- output file (single) ---
 
     already_done = 0
