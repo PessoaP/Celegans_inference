@@ -92,8 +92,8 @@ def main():
     counts = torch.tensor(df["Counts"].values)
     dils   = torch.tensor(df["Dilution"].values)
 
-    kappa_np = np.load("kappa_samples_stratified_highpH.npz")["kappa_samples"]
-    print(f"Loaded {len(kappa_np)} kappa samples from .npz file")
+    kappa_np = np.load(args.kappa_samples_path)["kappa_samples"]
+    print(f"Loaded {len(kappa_np)} kappa samples from {args.kappa_samples_path} file")
 
     dataset = TimeSeriesInferenceDataset(
         ts=ts, counts=counts, dils=dils,
@@ -104,6 +104,7 @@ def main():
     )
 
     out_path = os.path.join(output_dir, args.outfile)
+    print(out_path)
 
     # --- output file (single) ---
 
