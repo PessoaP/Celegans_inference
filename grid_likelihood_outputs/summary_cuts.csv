@@ -1,0 +1,9 @@
+title,mu_low,mu_high,rho_low,rho_high
+Exp_2_reduced_live_lowpH,0.2,0.28,0.08,0.2
+Exp_3_time-limited_lowpH,0.38,0.5,0.06,0.22
+Exp_5_time-limited_highpH,0.3,0.4,0.08,0.2
+Exp_6_BB_time-limited_highpH,0.22,0.36,0.02,0.14
+Exp_7_low-salinity_time-limited,0.34,0.44,0.14,0.38
+Exp_8_BB_low-salinity_time-limited,0.28,0.44,0.02,0.14
+Exp_1_live_lowpH,0.38,0.42,,
+Exp_4_live_highpH,0.32,0.42,,
