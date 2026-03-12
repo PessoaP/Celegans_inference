@@ -3,14 +3,15 @@
 #SBATCH -N 1
 #SBATCH -c 4
 #SBATCH --mem=96G
-#SBATCH -t 0-55:00:00
+#SBATCH -t 0-60:00:00
 
 #SBATCH -G a30:1
 
-#SBATCH -o /scratch/ppessoa/logs/zomega_2d/slurm.%j.out
-#SBATCH -e /scratch/ppessoa/logs/zomega_2d/slurm.%j.err
+####Change this to your scracth folder
+#SBATCH -o /scratch/jcspendl/logs/zomega_2d/slurm.%j.out
+#SBATCH -e /scratch/jcspendl/logs/zomega_2d/slurm.%j.err
 #SBATCH --mail-type=END,FAIL
-#SBATCH --mail-user=ppessoa@asu.edu
+#SBATCH --mail-user=jcspendl@asu.edu
 #SBATCH --export=NONE
 
 
