@@ -25,13 +25,14 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install numpy pandas scipy matplotlib scikit-learn tqdm nbconvert
 
 
-# python run_mcmc.py real_data/Exp_1_live_lowpH.csv \
-#   --alpha 0.05 \
-#   --mu 0.38:0.42 \
-#   --omega 0 \
-#   --rho 1 \
-#   --kappa-samples-path kappa_samples_stratified_highpH.npz \
-#   --outfile mcmc_res.csv
+python run_mcmc.py real_data/Exp_1_live_lowpH.csv \
+  --alpha 0.05 \
+  --mu 0.38:0.42 \
+  --omega 0 \
+  --rho 1 \
+  --kappa-samples-path kappa_samples_stratified_highpH.npz \
+  --outfile mcmc_res.csv
+  --jumpsize 0.025
 
 # python run_mcmc.py real_data/Exp_2_reduced_live_lowpH.csv \
 #   --alpha 0.05 \
@@ -42,23 +43,24 @@ pip install numpy pandas scipy matplotlib scikit-learn tqdm nbconvert
 #   --kappa-samples-path kappa_samples_stratified_highpH.npz \
 #   --outfile mcmc_res.csv
 
-python run_mcmc.py real_data/Exp_3_time-limited_lowpH.csv \
-  --alpha 0.05 \
-  --mu 0.38:0.50 \
-  --omega 0 \
-  --rho 0.06:0.22 \
-  --t-switch 24.0 \
-  --kappa-samples-path kappa_samples_stratified_highpH.npz \
-  --outfile mcmc_res.csv
-
-
-# python run_mcmc.py real_data/Exp_4_live_highpH.csv \
+# python run_mcmc.py real_data/Exp_3_time-limited_lowpH.csv \
 #   --alpha 0.05 \
-#   --mu 0.38:0.42 \
+#   --mu 0.38:0.50 \
 #   --omega 0 \
-#   --rho 1 \
+#   --rho 0.06:0.22 \
+#   --t-switch 24.0 \
 #   --kappa-samples-path kappa_samples_stratified_highpH.npz \
 #   --outfile mcmc_res.csv
+
+
+python run_mcmc.py real_data/Exp_4_live_highpH.csv \
+  --alpha 0.05 \
+  --mu 0.38:0.42 \
+  --omega 0 \
+  --rho 1 \
+  --kappa-samples-path kappa_samples_stratified_highpH.npz \
+  --outfile mcmc_res.csv \
+  --jumpsize 0.025
 
 #   python run_mcmc.py real_data/Exp_5_time-limited_highpH.csv \
 #   --alpha 0.05 \
