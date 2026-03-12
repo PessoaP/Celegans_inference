@@ -7,12 +7,13 @@
 
 #SBATCH -G a30:1
 
-####Change this to your scracth folder
+####Change this to your scratch folder
 #SBATCH -o /scratch/jamespet/logs/zomega_2d/slurm.%j.out
 #SBATCH -e /scratch/jamespet/logs/zomega_2d/slurm.%j.err
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=jamespet@asu.edu
 #SBATCH --export=NONE
+#SBATCH -D /scratch/jamespet/Celegans_inference/
 
 
 # === Load Environment ===
@@ -21,7 +22,7 @@ module load cuda-12.6.1-gcc-12.1.0
 module load mamba/latest
 
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install numpy pandas scipy matplotlib scikit-learn tqdm nbconvert tqdm
+pip install numpy pandas scipy matplotlib scikit-learn tqdm nbconvert
 
 
 python run_mcmc.py real_data/Exp_1_live_lowpH.csv \

@@ -7,13 +7,13 @@
 
 #SBATCH -G a30:1
 
-####Change this to your scracth folder
+####Change this to your scratch folder
 #SBATCH -o /scratch/jcspendl/logs/zomega_2d/slurm.%j.out
 #SBATCH -e /scratch/jcspendl/logs/zomega_2d/slurm.%j.err
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=jcspendl@asu.edu
 #SBATCH --export=NONE
-
+#SBATCH -D /scratch/jcspendl/Celegans_inference/
 
 # === Load Environment ===
 module purge
