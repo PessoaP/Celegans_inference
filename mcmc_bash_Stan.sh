@@ -21,6 +21,9 @@ module purge
 module load cuda-12.6.1-gcc-12.1.0
 module load mamba/latest
 
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install numpy pandas scipy matplotlib scikit-learn tqdm nbconvert
+
 
 # python run_mcmc.py real_data/Exp_1_live_lowpH.csv \
 #   --alpha 0.05 \
