@@ -6,3 +6,4 @@ inference_driver.py
 tests/
 kappa_samples_Exp1_only (same as 4gauss).npz
 plottwokappa.ipynb
+Plotting_log_only.ipynb
