@@ -31,7 +31,7 @@ python run_mcmc.py real_data/Exp_1_live_lowpH.csv \
   --omega 0 \
   --rho 1 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
-  --outfile mcmc_res.csv
+  --outfile mcmc_res.csv \
   --jumpsize 0.025
 
 # python run_mcmc.py real_data/Exp_2_reduced_live_lowpH.csv \
