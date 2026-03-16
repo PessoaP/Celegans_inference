@@ -118,6 +118,9 @@ def main():
     
     p.add_argument("--outfile", type=str, default="grid_zomega.csv")
 
+    p.add_argument("--jumpsize", type=float, default=0.01,
+                   help="Proposal jump size (default: 0.01)")
+
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -175,8 +178,8 @@ def main():
     flush_every = 10
 
     for iter in tqdm(range(args.n_samples)):
-        mu_prop, rho_prop = proposal(mu, rho, mu_range, rho_range)
-        
+        mu_prop, rho_prop = proposal(mu, rho, mu_range, rho_range, jumpsize_proposal=args.jumpsize)
+
         ll_prop = dataset.loglike(alpha, mu_prop, omega, rho_prop)
         ll_curr = dataset.loglike(alpha, mu, omega, rho)
 

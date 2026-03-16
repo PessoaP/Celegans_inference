@@ -1,3 +1,25 @@
+#!/bin/bash
+
+#SBATCH -N 1
+#SBATCH -c 4
+#SBATCH --mem=96G
+#SBATCH -t 0-48:00:00
+
+#SBATCH -p general
+#SBATCH -q grp_spresse
+#SBATCH -G a30:1
+
+#SBATCH -o /scratch/ppessoa/logs/zomega_2d/slurm.%j.out
+#SBATCH -e /scratch/ppessoa/logs/zomega_2d/slurm.%j.err
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=ppessoa@asu.edu
+#SBATCH --export=NONE
+
+
+# === Load Environment ===
+module purge
+module load cuda-12.6.1-gcc-12.1.0
+module load mamba/latest
 
 
 python run_mcmc.py real_data/Exp_1_live_lowpH.csv \
@@ -6,7 +28,8 @@ python run_mcmc.py real_data/Exp_1_live_lowpH.csv \
   --omega 0 \
   --rho 1 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
-  --outfile mcmc_res.csv
+  --outfile mcmc_res.csv \
+  --jumpsize 0.025
 
 python run_mcmc.py real_data/Exp_2_reduced_live_lowpH.csv \
   --alpha 0.05 \
@@ -15,7 +38,8 @@ python run_mcmc.py real_data/Exp_2_reduced_live_lowpH.csv \
   --rho 0.08:0.20 \
   --t-switch 0.0 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
-  --outfile mcmc_res.csv
+  --outfile mcmc_res.csv \
+
 
 python run_mcmc.py real_data/Exp_3_time-limited_lowpH.csv \
   --alpha 0.05 \
@@ -24,7 +48,7 @@ python run_mcmc.py real_data/Exp_3_time-limited_lowpH.csv \
   --rho 0.06:0.22 \
   --t-switch 24.0 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
-  --outfile mcmc_res.csv
+  --outfile mcmc_res.csv \
 
 
 python run_mcmc.py real_data/Exp_4_live_highpH.csv \
@@ -33,7 +57,8 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --omega 0 \
   --rho 1 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
-  --outfile mcmc_res.csv
+  --outfile mcmc_res.csv \
+  --jumpsize 0.025
 
   python run_mcmc.py real_data/Exp_5_time-limited_highpH.csv \
   --alpha 0.05 \
@@ -42,7 +67,7 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --rho 0.08:0.2 \
   --t-switch 24.0 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
-  --outfile mcmc_res.csv
+  --outfile mcmc_res.csv \
 
 
   python run_mcmc.py real_data/Exp_6_BB_time-limited_highpH.csv \
@@ -52,23 +77,25 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --rho 0.02:0.14 \
   --t-switch 24.0 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
-  --outfile mcmc_res.csv
+  --outfile mcmc_res.csv \
 
 
-  # python run_mcmc.py real_data/Exp_7_low-salinity_time-limited.csv \
-  # --alpha 0.04 \
-  # --mu 0.34:0.44 \
-  # --omega 0 \
-  # --rho 0.14:0.38 \
-  # --t-switch 24.0 \
-  # --kappa-samples-path kappa_samples_stratified_highpH.npz \
-  # --outfile mcmc_res.csv
 
-  # python run_mcmc.py real_data/Exp_8_BB_low-salinity_time-limited.csv \
-  # --alpha 0.04 \
-  # --mu 0.28:0.44 \
-  # --omega 0 \
-  # --rho 0.02:0.14 \
-  # --t-switch 24.0 \
-  # --kappa-samples-path kappa_samples_stratified_highpH.npz \
-  # --outfile mcmc_res.csv
+  python run_mcmc.py real_data/Exp_7_low-salinity_time-limited.csv \
+  --alpha 0.04 \
+  --mu 0.34:0.44 \
+  --omega 0 \
+  --rho 0.14:0.38 \
+  --t-switch 24.0 \
+  --kappa-samples-path kappa_samples_stratified_highpH.npz \
+  --outfile mcmc_res.csv \
+
+
+  python run_mcmc.py real_data/Exp_8_BB_low-salinity_time-limited.csv \
+  --alpha 0.04 \
+  --mu 0.28:0.44 \
+  --omega 0 \
+  --rho 0.02:0.14 \
+  --t-switch 24.0 \
+  --kappa-samples-path kappa_samples_stratified_highpH.npz \
+  --outfile mcmc_res.csv \
