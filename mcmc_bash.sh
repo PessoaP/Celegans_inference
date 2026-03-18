@@ -39,6 +39,7 @@ python run_mcmc.py real_data/Exp_2_reduced_live_lowpH.csv \
   --t-switch 0.0 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
   --outfile mcmc_res.csv \
+  --jumpsize 0.025
 
 
 python run_mcmc.py real_data/Exp_3_time-limited_lowpH.csv \
@@ -49,6 +50,7 @@ python run_mcmc.py real_data/Exp_3_time-limited_lowpH.csv \
   --t-switch 24.0 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
   --outfile mcmc_res.csv \
+  --jumpsize 0.025
 
 
 python run_mcmc.py real_data/Exp_4_live_highpH.csv \
@@ -68,6 +70,7 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --t-switch 24.0 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
   --outfile mcmc_res.csv \
+  --jumpsize 0.025
 
 
   python run_mcmc.py real_data/Exp_6_BB_time-limited_highpH.csv \
@@ -78,6 +81,7 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --t-switch 24.0 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
   --outfile mcmc_res.csv \
+  --jumpsize 0.025
 
 
 
@@ -89,6 +93,7 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --t-switch 24.0 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
   --outfile mcmc_res.csv \
+  --jumpsize 0.025
 
 
   python run_mcmc.py real_data/Exp_8_BB_low-salinity_time-limited.csv \
@@ -99,3 +104,4 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --t-switch 24.0 \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
   --outfile mcmc_res.csv \
+  --jumpsize 0.025
