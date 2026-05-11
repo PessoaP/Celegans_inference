@@ -21,7 +21,7 @@ module purge
 module load cuda-12.6.1-gcc-12.1.0
 module load mamba/latest
 
-
+## Standard experiments (Fig. 4/S8)
 python run_mcmc.py real_data/Exp_1_live_lowpH.csv \
   --alpha 0.05 \
   --mu 0.38:0.42 \
@@ -41,7 +41,6 @@ python run_mcmc.py real_data/Exp_2_reduced_live_lowpH.csv \
   --outfile mcmc_res.csv \
   --jumpsize 0.025
 
-
 python run_mcmc.py real_data/Exp_3_time-limited_lowpH.csv \
   --alpha 0.05 \
   --mu 0.38:0.50 \
@@ -51,7 +50,6 @@ python run_mcmc.py real_data/Exp_3_time-limited_lowpH.csv \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
   --outfile mcmc_res.csv \
   --jumpsize 0.025
-
 
 python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --alpha 0.05 \
@@ -72,7 +70,6 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --outfile mcmc_res.csv \
   --jumpsize 0.025
 
-
   python run_mcmc.py real_data/Exp_6_BB_time-limited_highpH.csv \
   --alpha 0.05 \
   --mu 0.22:0.36 \
@@ -82,8 +79,6 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
   --outfile mcmc_res.csv \
   --jumpsize 0.025
-
-
 
   python run_mcmc.py real_data/Exp_7_low-salinity_time-limited.csv \
   --alpha 0.04 \
@@ -95,7 +90,6 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --outfile mcmc_res.csv \
   --jumpsize 0.025
 
-
   python run_mcmc.py real_data/Exp_8_BB_low-salinity_time-limited.csv \
   --alpha 0.04 \
   --mu 0.28:0.44 \
@@ -105,3 +99,48 @@ python run_mcmc.py real_data/Exp_4_live_highpH.csv \
   --kappa-samples-path kappa_samples_stratified_highpH.npz \
   --outfile mcmc_res.csv \
   --jumpsize 0.025
+
+
+
+## Individual replicates (S10)
+
+python run_mcmc.py real_data/extra/Exp_3_Stochasticity_data_gut.csv \
+  --alpha 0.05 \
+  --mu 0.4:0.65 \
+  --omega 0 \
+  --rho 0.05:0.25 \
+  --kappa-samples-path kappa_samples_stratified_highpH.npz \
+  --outfile mcmc_res.csv \
+  --t-switch 24.0 \
+  --jumpsize 0.025
+
+python run_mcmc.py real_data/extra/Exp_3_Stochasticity_data_freezer.csv \
+  --alpha 0.05 \
+  --mu 0.32:0.65 \
+  --omega 0 \
+  --rho 0.05:0.29 \
+  --kappa-samples-path kappa_samples_stratified_highpH.npz \
+  --outfile mcmc_res.csv \
+  --t-switch 24.0 \
+  --jumpsize 0.025
+
+python run_mcmc.py real_data/extra/Exp_3_gut_replicate_1.csv \
+  --alpha 0.05 \
+  --mu 0.3:0.5 \
+  --omega 0 \
+  --rho 0.05:0.3 \
+  --kappa-samples-path kappa_samples_stratified_highpH.npz \
+  --outfile mcmc_exp3_replicate_1.csv \
+  --t-switch 24.0 \
+  --jumpsize 0.025
+
+python run_mcmc.py real_data/extra/Exp_3_gut_replicate_2.csv \
+  --alpha 0.05 \
+  --mu 0.3:0.5 \
+  --omega 0 \
+  --rho 0.05:0.3 \
+  --kappa-samples-path kappa_samples_stratified_highpH.npz \
+  --outfile mcmc_exp3_replicate_2.csv \
+  --t-switch 24.0 \
+  --jumpsize 0.025
+
