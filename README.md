@@ -52,7 +52,9 @@ The MCMC analysis uses the grid-calculation results and produces the posterior s
 bash mcmc_bash.sh
 ```
 
+### Figures
 
+Finally run the notebook `FigurePlotting.ipynb`, which generates the figures used in the manuscript.
 
 ## Requirements
 
@@ -69,11 +71,14 @@ Use this file to reproduce the package versions used for the analysis.
 If you use this code, please cite the accompanying paper:
 
 ```bibtex
-[add BibTeX citation here]
+@misc{Lu2026,
+  title = {Stochastic colonization and host-to-host transmission shape gut bacterial variability},
+  url = {http://dx.doi.org/10.64898/2026.05.11.724410},
+  DOI = {10.64898/2026.05.11.724410},
+  archivePrefix={bioRxiv},
+  publisher = {openRxiv},
+  author = {Lu,  Carol and Tashev,  Stanimir Asenov and Pessoa,  Pedro and Kruithoff,  Rory and Shepherd,  Douglas P and Presse,  Steve},
+  year = {2026},
+}
 ```
 
-## License
-
-```text
-[add license information here]
-```
