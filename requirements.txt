@@ -1,0 +1,23 @@
+# Python packages required to run the analysis scripts and notebooks in this
+# repository (calibrate_capacity.py, run_grid.py, run_mcmc.py, repop/, utils/,
+# and the *.ipynb figure notebooks).
+#
+# GPU/CUDA users: install PyTorch separately following the instructions at
+# https://pytorch.org/get-started/locally/ (matching your CUDA version), then
+# install the rest of this file. See env_gpu.yml for the conda/mamba
+# equivalent used on the ASU SOL cluster.
+#
+# Install with: pip install -r requirements.txt
+
+numpy
+pandas
+scipy
+matplotlib
+scikit-learn
+seaborn
+cycler
+tqdm
+torch
+jupyter
+notebook
+nbconvert

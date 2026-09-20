@@ -14,5 +14,7 @@ dependencies:
   - scipy
   - matplotlib
   - scikit-learn
+  - seaborn
+  - cycler
   - tqdm
   - nbconvert

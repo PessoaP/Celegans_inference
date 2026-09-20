@@ -14,6 +14,25 @@ For more details on REPOP, see also our eLife paper:
 
 The local copy is included here to make the analyses associated with this paper reproducible without requiring a separate installation.
 
+## Installation
+
+To install all the packages needed to run the calculations in this repository:
+
+```bash
+pip install -r requirements.txt
+```
+
+This covers everything needed for `calibrate_capacity.py`, `run_grid.py`, `run_mcmc.py`, the `repop`/`utils` modules, and the figure notebooks (numpy, pandas, scipy, matplotlib, scikit-learn, seaborn, tqdm, torch, and jupyter/nbconvert).
+
+If you need GPU-accelerated PyTorch (recommended for the grid and MCMC steps), install it first following [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/) for your CUDA version, then run the command above for the rest of the dependencies.
+
+Alternatively, on a cluster (e.g. ASU's SOL) or if you prefer conda/mamba, use the provided `env_gpu.yml`:
+
+```bash
+mamba env create -f env_gpu.yml
+conda activate torchcuda
+```
+
 ## Analysis workflow
 
 ### Pre-calibrate carrying capacity
